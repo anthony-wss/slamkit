@@ -8,7 +8,7 @@ name = "slamkit"
 version = "0.1.0"
 dependencies = [
     "torch",
-    "torchaudio",
+    "torchaudio<2.9",
     "torchvision",
     "transformers>=4.48.1",
     "datasets",
@@ -17,7 +17,8 @@ dependencies = [
     "accelerate",
     "numpy",
     "trl",
-    "scikit-learn"
+    "scikit-learn",
+    "soundfile>=0.13.1",
 ]
 
 [tool.setuptools.packages.find]
