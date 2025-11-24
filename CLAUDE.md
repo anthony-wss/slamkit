@@ -52,10 +52,19 @@ alias srun='singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudn
 ### Core Pipeline (4 main stages)
 
 1. **Extract features** - Convert audio to discrete tokens using speech tokenizers:
+
+**HuBERT-based (500 units, 25Hz):**
 ```bash
 singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
   bash -c "cd /workspace && python cli/extract_features.py data_path=<AUDIO_DIR> ext=<flac|wav> out_path=<OUTPUT>.jsonl batch_size=16 tokeniser=unit_hubert_25 tokeniser.feature_extractor.compile=true num_workers=4"
 ```
+
+**AUV-based (20480 units, 50Hz):**
+```bash
+singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "cd /workspace && python cli/extract_features.py data_path=<AUDIO_DIR> ext=<flac|wav> out_path=<OUTPUT>.jsonl batch_size=4 tokeniser=unit_auv tokeniser.feature_extractor.checkpoint_path=auv.pt num_workers=0"
+```
+**Note**: AUV requires the `auv.pt` checkpoint file. Download from [AUV repository](https://github.com/ishine/AUV) and place in the project root. AUV uses a larger codebook (20480 vs 500) and higher frame rate (50Hz vs 25Hz) than HuBERT.
 
 2. **Prepare tokens** - Create string representations for training:
 ```bash
@@ -100,7 +109,7 @@ singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif
 
 ### Configuration System (Hydra-based)
 All scripts use Hydra configurations located in `config/`. Key config groups:
-- **tokeniser**: `unit_hubert_25`, `interleaved_hubert_25` (speech-only vs speech-text)
+- **tokeniser**: `unit_hubert_25`, `unit_auv`, `interleaved_hubert_25` (speech-only vs speech-text)
 - **model**: `slam`, `twist`, `gslm` (different model architectures)
 - **training_args**: Standard HuggingFace TrainingArguments
 - **metric**: Evaluation metrics (generate, tstorycloze, sblimp, swuggy, salmon, etc.)
@@ -124,8 +133,11 @@ All scripts use Hydra configurations located in `config/`. Key config groups:
 
 **Feature Extractors** (`slamkit/feature_extractor/`):
 - `AudioFeatureExtractor`: Base class
-- `HubertFeatureExtractor`: Extracts features from audio using HuBERT/mHuBERT
-- Converts raw audio to discrete tokens via clustering
+- `HubertFeatureExtractor`: Extracts features from audio using HuBERT/mHuBERT (500 units, 25Hz)
+  - Converts raw audio to discrete tokens via k-means clustering on continuous features
+- `AUVFeatureExtractor`: Extracts features using AUV neural codec (20480 units, 50Hz)
+  - Uses learned vector quantization instead of k-means clustering
+  - Higher codebook size and frame rate than HuBERT
 
 **Trainers** (`slamkit/trainer/`):
 - `SLAMTrainer`: Custom trainer extending HuggingFace Trainer
@@ -168,6 +180,12 @@ All scripts use Hydra configurations located in `config/`. Key config groups:
 - Files sorted by length (decreasing) to minimize padding and fail early on OOM
 - Use `data_skip=N data_take=M` to subset data
 - Use `tokeniser.feature_extractor.compile=true` for torch.compile (faster but higher init latency)
+- **AUV-specific notes**:
+  - Requires `auv.pt` checkpoint file (download from AUV repository)
+  - Set `num_workers=0` due to AUV model initialization constraints
+  - Use smaller batch sizes (e.g., `batch_size=4`) compared to HuBERT
+  - Configure checkpoint path: `tokeniser.feature_extractor.checkpoint_path=auv.pt`
+  - Optional: Enable bfloat16 with `tokeniser.feature_extractor.use_bf16=true`
 
 ### Evaluation
 - Generation config matches paper defaults

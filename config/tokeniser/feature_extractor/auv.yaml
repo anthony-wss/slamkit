@@ -1,0 +1,18 @@
+# @package _global_
+
+tokeniser:
+  feature_extractor_type: 'auv'
+
+  feature_extractor:
+    # Clear inherited HuBERT parameters
+    pretrained_model: null
+    kmeans_path: null
+    layer: null
+    cache_path: null
+    load_config_only: null
+    # AUV-specific parameters
+    checkpoint_path: 'auv.pt'
+    compile: false
+    device: 'cuda:0'
+    use_bf16: false
+    num_units: 20480  # AUV codebook size

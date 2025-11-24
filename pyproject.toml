@@ -19,6 +19,7 @@ dependencies = [
     "trl",
     "scikit-learn",
     "soundfile>=0.13.1",
+    "auv>=0.1.1",
 ]
 
 [tool.setuptools.packages.find]

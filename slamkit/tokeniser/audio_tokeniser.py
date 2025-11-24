@@ -100,6 +100,9 @@ def _init_feature_extractor(fe_type: str, cfg: DictConfig) -> AudioFeatureExtrac
     if fe_type == 'hubert':
         from ..feature_extractor.hubert_feature_extractor import HubertFeatureExtractor
         return HubertFeatureExtractor(**cfg)
+    elif fe_type == 'auv':
+        from ..feature_extractor.auv_feature_extractor import AUVFeatureExtractor
+        return AUVFeatureExtractor(**cfg)
     else:
         raise ValueError(f'Unknown speech tokeniser type: {fe_type}')
 
