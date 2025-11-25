@@ -95,9 +95,10 @@ class UnitLM(PreTrainedModel, TokenLM):
                                                        config=config.base_config,
                                                        trust_remote_code=config.trust_remote_code,
                                                        use_safetensors=config.use_safetensors,
-                                                       torch_dtype=config.base_config.torch_dtype) \
+                                                       torch_dtype=config.base_config.torch_dtype,
+                                                       device_map=None) \
             if (not from_pretrained and config.twist_init) else AutoModelForCausalLM.from_config(config.base_config,
-                                                                                                trust_remote_code=config.trust_remote_code, 
+                                                                                                trust_remote_code=config.trust_remote_code,
                                                                                                 torch_dtype=config.base_config.torch_dtype)
         self.lm.resize_token_embeddings(config.vocab_size)
         self.config = config

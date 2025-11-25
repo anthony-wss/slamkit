@@ -1,0 +1,6 @@
+defaults:
+  - default
+  - _self_
+
+# No additional settings needed - SFT data is already pre-tokenized
+# with input_ids, labels, and attention_mask fields

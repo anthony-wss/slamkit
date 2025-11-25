@@ -146,3 +146,29 @@ def init_preference_optimization_dataset(cfg: DictConfig):
     cols_to_remove.sort()  # needed because remove columns creates different fingerprint based on order. keep it sorted for caching mechnism
     dataset = dataset.remove_columns(cols_to_remove)  # maybe we want to do more preprocessing here e.g. context len?
     return dataset
+
+
+def init_sft_dataset(cfg: DictConfig) -> Tuple[DatasetDict, DataCollatorForLanguageModeling]:
+    """
+    Initialize SFT dataset from pre-tokenized data (output of prepare_sft_tokens.py).
+
+    Unlike init_dataset, this function does not call tokeniser.prepare_sample since the data
+    already contains input_ids, labels, and attention_mask fields.
+    """
+    data_dct = {'train': glob(cfg.data.train_path)}
+    if cfg.data.val_path is not None:
+        data_dct['validation'] = glob(cfg.data.val_path)
+
+    dataset = load_dataset('json', data_files=data_dct, num_proc=cfg.data.num_proc)
+
+    # Remove any extra columns, keep only the required fields
+    cols_to_remove = list(set(dataset['train'].column_names) - {'input_ids', 'attention_mask', 'labels'})
+    cols_to_remove.sort()
+    dataset = dataset.remove_columns(cols_to_remove)
+
+    # No need for special collator since data is already properly formatted
+    # DataCollatorForLanguageModeling will handle padding if needed
+    from transformers import default_data_collator
+    collator = default_data_collator
+
+    return dataset, collator

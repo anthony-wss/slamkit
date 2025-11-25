@@ -1,0 +1,10 @@
+defaults:
+  - model: sft_qwen
+  - training_args: sft_training_args
+  - data: sft_data
+  - logger: print
+  - _self_
+
+cont_training: False
+run_time: null
+train_max_tokens: null

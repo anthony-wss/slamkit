@@ -1,0 +1,17 @@
+defaults:
+  - default
+  - _self_
+
+# Model for SFT fine-tuning
+# Create new UnitLM with TWIST initialization from Qwen base model
+pretrained_model: null  # null means create fresh model with TWIST from base_model_name
+context_len: 1024
+tlm_type: twist
+
+config_args:
+  base_model_name: Qwen/Qwen3-0.6B
+  vocab_size: -1  # Will be auto-determined from dataset
+  use_cache: false
+  torch_dtype: bfloat16
+  trust_remote_code: true
+  twist_init: true

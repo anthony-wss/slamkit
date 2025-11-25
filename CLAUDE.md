@@ -150,6 +150,33 @@ singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif
 - Handles different text tokenizers (e.g., Qwen, OPT) with proper newline encoding
 - Output file is ready for standard HuggingFace training pipeline
 
+3. **Train SFT model** - Fine-tune a model on SFT data:
+```bash
+singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "cd /workspace && python cli/train_sft.py data.train_path=<SFT_TOKENS>.jsonl data.val_path=<SFT_TOKENS>.jsonl training_args.output_dir=<OUTPUT_DIR>"
+```
+
+**Input**: Training-ready JSONL from step 2 with `input_ids`, `labels`, `attention_mask`
+**Output**: Fine-tuned model saved to `training_args.output_dir`
+
+**Key features**:
+- **Model initialization**: Uses TWIST initialization to adapt Qwen/Qwen3-0.6B vocabulary for speech tokens
+- **Label masking**: Automatically handled - only computes loss on assistant responses (labels with -100 are ignored)
+- **Vocab size**: Auto-determined from dataset (includes text tokens + special tokens like `<|im_start|>`, `<|im_end|>`)
+- **Training args**: Configurable via `config/training_args/sft_training_args.yaml`
+
+**Default training settings**:
+- Base model: Qwen/Qwen3-0.6B with TWIST initialization
+- Learning rate: 2e-5 with cosine schedule
+- Batch size: 4 per device, gradient accumulation: 4 (effective batch size: 16)
+- Epochs: 3
+- Precision: bfloat16
+
+**Notes**:
+- The model uses TWIST initialization (`twist_init: true`) to initialize new token embeddings from the base model's vocabulary distribution
+- Set `pretrained_model: null` in model config to create a fresh model with TWIST (not load an existing SFT checkpoint)
+- For custom training settings, override via command line: `training_args.learning_rate=1e-5 training_args.num_train_epochs=5`
+
 ## Architecture Overview
 
 ### Configuration System (Hydra-based)

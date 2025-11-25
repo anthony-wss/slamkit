@@ -170,7 +170,6 @@ outputs/
 scripts/
 .vscode/
 *.json
-data
 dpo_data
 cli/wandb
 *.wav

@@ -1,0 +1,19 @@
+defaults:
+  - default
+  - _self_
+
+# SFT training arguments
+output_dir: ./results/sft
+num_train_epochs: 3
+per_device_train_batch_size: 4
+per_device_eval_batch_size: 4
+gradient_accumulation_steps: 4
+learning_rate: 2e-5
+warmup_ratio: 0.03
+lr_scheduler_type: cosine
+lr_scheduler_kwargs: null  # Override default min_lr for standard cosine
+save_strategy: epoch
+eval_strategy: epoch
+logging_steps: 10
+save_total_limit: 2
+bf16: True
