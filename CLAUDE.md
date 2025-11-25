@@ -105,6 +105,51 @@ singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif
   bash -c "cd /workspace && python cli/preference_alignment_train.py data.train_path=<DATA>.jsonl model.pretrained_model=<MODEL_PATH>"
 ```
 
+### Supervised Fine-Tuning (SFT)
+
+**Note**: SFT support is newly added to SlamKit to enable speech-text joint training on instruction-following dialogues.
+
+SFT enables training on instruction-following dialogues with both speech and text modalities. The pipeline processes conversation pairs (user → assistant) into training-ready tokens with proper label masking.
+
+**Input data format** (JSONL with conversation pairs):
+```json
+{"user_text": "Hello, how are you", "user_audio_path": "path/to/user.flac", "assistant_text": "I'm fine, thank you.", "assistant_audio_path": "path/to/assistant.flac"}
+```
+
+**Pipeline structure**:
+```
+audio/ + sft_test.jsonl → sft_features.jsonl → sft_tokens.jsonl
+```
+
+1. **Extract SFT features** - Process both user and assistant audio:
+```bash
+singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "cd /workspace && python cli/extract_sft_features.py data_path=<SFT_DATA>.jsonl out_path=<OUTPUT>.jsonl batch_size=8 tokeniser=unit_hubert_25"
+```
+
+**Input**: JSONL file with `user_text`, `user_audio_path`, `assistant_text`, `assistant_audio_path` fields
+**Output**: JSONL file with added `user_audio` and `assistant_audio` feature fields (units and durations)
+
+2. **Prepare SFT tokens** - Create ChatML-formatted training sequences:
+```bash
+singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "cd /workspace && python cli/prepare_sft_tokens.py data_path=<SFT_FEATURES>.jsonl out_path=<OUTPUT>.jsonl"
+```
+
+**Input**: JSONL file from step 1 with extracted features
+**Output**: Training-ready JSONL with `input_ids`, `labels`, and `attention_mask`
+
+**Key features**:
+- **ChatML formatting**: Sequences formatted as `<|im_start|>user\n{text}\n{audio}<|im_end|>\n<|im_start|>assistant\n{text}\n{audio}<|im_end|>`
+- **Token order**: user text → user audio → assistant text → assistant audio
+- **Label masking**: User portion masked with -100 (no loss), only assistant responses contribute to training loss
+- **Tokenizer**: Uses `interleaved_hubert_25` tokenizer for speech-text handling
+
+**Notes**:
+- The script automatically adds special tokens (`<|im_start|>`, `<|im_end|>`) to the tokenizer vocabulary
+- Handles different text tokenizers (e.g., Qwen, OPT) with proper newline encoding
+- Output file is ready for standard HuggingFace training pipeline
+
 ## Architecture Overview
 
 ### Configuration System (Hydra-based)

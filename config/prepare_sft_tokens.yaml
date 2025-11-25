@@ -1,0 +1,11 @@
+defaults:
+  - tokeniser: interleaved_hubert_25
+  - _self_
+
+tokeniser:
+  feature_extractor:
+    load_config_only: true
+
+data_path: ???  # Input: path to sft_features.jsonl file
+out_path: ???   # Output: path to output file (e.g., example_data/sft_tokens.jsonl)
+n_threads: 32
