@@ -1,6 +1,10 @@
 auv.pt
 example_output
 
+# example_arc
+example_arc/*.jsonl
+example_arc/arc_model/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

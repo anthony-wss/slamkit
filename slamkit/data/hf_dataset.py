@@ -166,9 +166,46 @@ def init_sft_dataset(cfg: DictConfig) -> Tuple[DatasetDict, DataCollatorForLangu
     cols_to_remove.sort()
     dataset = dataset.remove_columns(cols_to_remove)
 
-    # No need for special collator since data is already properly formatted
-    # DataCollatorForLanguageModeling will handle padding if needed
-    from transformers import default_data_collator
-    collator = default_data_collator
+    # Create a custom collator that pads variable-length sequences
+    # We can't use default_data_collator because it doesn't pad
+    class SFTDataCollator:
+        """Collator that pads input_ids, labels, and attention_mask to max length in batch."""
+        def __init__(self, pad_token_id=0, label_pad_token_id=-100):
+            self.pad_token_id = pad_token_id
+            self.label_pad_token_id = label_pad_token_id
+
+        def __call__(self, features):
+            import torch
+            # Find max length in batch
+            max_length = max(len(f['input_ids']) for f in features)
+
+            # Pad each feature
+            batch = {
+                'input_ids': [],
+                'attention_mask': [],
+                'labels': []
+            }
+
+            for f in features:
+                seq_len = len(f['input_ids'])
+                pad_len = max_length - seq_len
+
+                # Pad input_ids
+                batch['input_ids'].append(f['input_ids'] + [self.pad_token_id] * pad_len)
+
+                # Pad attention_mask (0 for padding positions)
+                batch['attention_mask'].append(f['attention_mask'] + [0] * pad_len)
+
+                # Pad labels with label_pad_token_id (-100 so padding is ignored in loss)
+                batch['labels'].append(f['labels'] + [self.label_pad_token_id] * pad_len)
+
+            # Convert to tensors
+            batch['input_ids'] = torch.tensor(batch['input_ids'], dtype=torch.long)
+            batch['attention_mask'] = torch.tensor(batch['attention_mask'], dtype=torch.long)
+            batch['labels'] = torch.tensor(batch['labels'], dtype=torch.long)
+
+            return batch
+
+    collator = SFTDataCollator(pad_token_id=0, label_pad_token_id=-100)
 
     return dataset, collator
