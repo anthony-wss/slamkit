@@ -1,0 +1,18 @@
+# @package _global_
+
+tokeniser:
+  feature_extractor_type: 'cosyvoice'
+
+  feature_extractor:
+    # Clear inherited HuBERT parameters
+    pretrained_model: null
+    kmeans_path: null
+    layer: null
+    cache_path: null
+    load_config_only: null
+    # CosyVoice-specific parameters
+    onnx_path: 'speech_tokenizer_v2.onnx'  # Path to CosyVoice ONNX model (v1: 4096 units, v2: 8192 units)
+    device: 'cuda:0'
+    num_units: 8192  # CosyVoice v2 codebook size (v1: 4096, v2: 8192)
+    sample_rate: 16000  # Expected audio sample rate
+    hop_length: 320  # Hop length for frame rate calculation (50Hz frame rate)

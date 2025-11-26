@@ -103,6 +103,9 @@ def _init_feature_extractor(fe_type: str, cfg: DictConfig) -> AudioFeatureExtrac
     elif fe_type == 'auv':
         from ..feature_extractor.auv_feature_extractor import AUVFeatureExtractor
         return AUVFeatureExtractor(**cfg)
+    elif fe_type == 'cosyvoice':
+        from ..feature_extractor.cosyvoice_feature_extractor import CosyVoiceFeatureExtractor
+        return CosyVoiceFeatureExtractor(**cfg)
     else:
         raise ValueError(f'Unknown speech tokeniser type: {fe_type}')
 

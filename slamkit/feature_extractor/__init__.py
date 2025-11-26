@@ -1,2 +1,3 @@
 from .hubert_feature_extractor import HubertFeatureExtractor
 from .auv_feature_extractor import AUVFeatureExtractor
+from .cosyvoice_feature_extractor import CosyVoiceFeatureExtractor
