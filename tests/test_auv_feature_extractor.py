@@ -7,30 +7,26 @@ This script tests:
 3. Verifying the output format
 """
 
+import pytest
 import torch
 import torchaudio
 from slamkit.feature_extractor import AUVFeatureExtractor
 
 
-def main():
-    print("=" * 60)
-    print("Testing AUVFeatureExtractor")
-    print("=" * 60)
-
-    # Initialize the feature extractor
-    print("\n1. Initializing AUV Feature Extractor...")
-    extractor = AUVFeatureExtractor(
+@pytest.fixture
+def extractor():
+    """Create AUV feature extractor fixture."""
+    return AUVFeatureExtractor(
         checkpoint_path='auv.pt',
         compile=False,
         device='cuda:0' if torch.cuda.is_available() else 'cpu',
         use_bf16=False,
     )
-    print(f"   ✓ Feature extractor initialized")
-    print(f"   - Sample rate: {extractor.sample_rate} Hz")
-    print(f"   - Unit duration: {extractor.get_unit_duration():.4f} seconds ({1/extractor.get_unit_duration():.1f} Hz)")
 
-    # Load test audio
-    print("\n2. Loading test audio...")
+
+@pytest.fixture
+def test_audio(extractor):
+    """Load and prepare test audio."""
     audio_path = "example_data/audio/audio1.flac"
     wav, sr = torchaudio.load(audio_path)
 
@@ -38,58 +34,89 @@ def main():
     if wav.shape[0] > 1:
         wav = torch.mean(wav, dim=0, keepdim=True)
 
-    print(f"   ✓ Audio loaded: {audio_path}")
-    print(f"   - Shape: {wav.shape}")
-    print(f"   - Sample rate: {sr} Hz")
-    print(f"   - Duration: {wav.shape[1] / sr:.2f} seconds")
-
     # Resample if needed
     if sr != extractor.sample_rate:
-        print(f"   - Resampling from {sr} Hz to {extractor.sample_rate} Hz...")
         wav = torchaudio.functional.resample(wav, sr, extractor.sample_rate)
-        sr = extractor.sample_rate
 
-    # Extract features
-    print("\n3. Extracting codec tokens...")
-    features = extractor.extract(wav)
+    return wav
 
-    print(f"   ✓ Features extracted")
-    print(f"   - Number of samples: {len(features)}")
-    print(f"   - Token sequence length: {len(features[0])}")
-    print(f"   - Token range: [{features[0].min()}, {features[0].max()}]")
-    print(f"   - First 20 tokens: {features[0][:20]}")
-    print(f"   - Token dtype: {features[0].dtype}")
 
-    # Verify downsampling ratio
-    expected_tokens = int(wav.shape[1] / extractor._hop_length)
-    actual_tokens = len(features[0])
-    print(f"\n4. Verification:")
-    print(f"   - Expected tokens (based on hop length): ~{expected_tokens}")
-    print(f"   - Actual tokens: {actual_tokens}")
-    print(f"   - Downsampling factor: {wav.shape[1] / actual_tokens:.1f}x")
+@pytest.mark.skipif(
+    not __import__('os').path.exists('auv.pt'),
+    reason="AUV checkpoint not found (auv.pt)"
+)
+class TestAUVFeatureExtractor:
+    """Test suite for AUV feature extractor."""
 
-    # Test with batch
-    print("\n5. Testing with batch...")
-    batch = wav.repeat(3, 1)  # Create a batch of 3 identical samples
-    batch_features = extractor.extract(batch)
+    def test_initialization(self, extractor):
+        """Test that the feature extractor initializes correctly."""
+        assert extractor.sample_rate == 16000
+        assert extractor.get_unit_duration() == pytest.approx(0.02)
+        assert 1 / extractor.get_unit_duration() == pytest.approx(50.0)
+        print(f"✓ Feature extractor initialized")
+        print(f"  - Sample rate: {extractor.sample_rate} Hz")
+        print(f"  - Unit duration: {extractor.get_unit_duration():.4f} seconds ({1/extractor.get_unit_duration():.1f} Hz)")
 
-    print(f"   ✓ Batch extraction successful")
-    print(f"   - Batch size: {len(batch_features)}")
-    print(f"   - All samples have same length: {all(len(f) == len(batch_features[0]) for f in batch_features)}")
+    def test_feature_extraction(self, extractor, test_audio):
+        """Test basic feature extraction."""
+        wav = test_audio
+        features = extractor.extract(wav)
 
-    # Test with lens parameter
-    print("\n6. Testing with length masking...")
-    lens = torch.tensor([wav.shape[1], wav.shape[1] // 2, wav.shape[1] // 4])
-    batch_features_masked = extractor.extract(batch, lens=lens)
+        assert len(features) == 1
+        assert len(features[0]) > 0
+        assert features[0].min() >= 0
+        assert features[0].max() < 20480  # AUV has 20480 units
 
-    print(f"   ✓ Length masking successful")
-    for i, (length, tokens) in enumerate(zip(lens, batch_features_masked)):
-        print(f"   - Sample {i}: input length={length.item()}, output tokens={len(tokens)}")
+        print(f"✓ Features extracted")
+        print(f"  - Number of samples: {len(features)}")
+        print(f"  - Token sequence length: {len(features[0])}")
+        print(f"  - Token range: [{features[0].min()}, {features[0].max()}]")
+        print(f"  - First 20 tokens: {features[0][:20]}")
 
-    print("\n" + "=" * 60)
-    print("✓ All tests passed!")
-    print("=" * 60)
+    def test_downsampling_ratio(self, extractor, test_audio):
+        """Test downsampling ratio verification."""
+        wav = test_audio
+        features = extractor.extract(wav)
+
+        expected_tokens = int(wav.shape[1] / extractor._hop_length)
+        actual_tokens = len(features[0])
+
+        # Allow some tolerance
+        assert abs(expected_tokens - actual_tokens) < 10
+        print(f"✓ Downsampling verification")
+        print(f"  - Expected tokens: ~{expected_tokens}")
+        print(f"  - Actual tokens: {actual_tokens}")
+        print(f"  - Downsampling factor: {wav.shape[1] / actual_tokens:.1f}x")
+
+    def test_batch_extraction(self, extractor, test_audio):
+        """Test batch extraction."""
+        wav = test_audio
+        batch = wav.repeat(3, 1)  # Create a batch of 3 identical samples
+        batch_features = extractor.extract(batch)
+
+        assert len(batch_features) == 3
+        assert all(len(f) == len(batch_features[0]) for f in batch_features)
+
+        print(f"✓ Batch extraction successful")
+        print(f"  - Batch size: {len(batch_features)}")
+        print(f"  - All samples have same length: {all(len(f) == len(batch_features[0]) for f in batch_features)}")
+
+    def test_length_masking(self, extractor, test_audio):
+        """Test length masking functionality."""
+        wav = test_audio
+        batch = wav.repeat(3, 1)
+        lens = torch.tensor([wav.shape[1], wav.shape[1] // 2, wav.shape[1] // 4])
+        batch_features_masked = extractor.extract(batch, lens=lens)
+
+        assert len(batch_features_masked) == 3
+        # Features should be shorter for shorter inputs
+        assert len(batch_features_masked[1]) < len(batch_features_masked[0])
+        assert len(batch_features_masked[2]) < len(batch_features_masked[1])
+
+        print(f"✓ Length masking successful")
+        for i, (length, tokens) in enumerate(zip(lens, batch_features_masked)):
+            print(f"  - Sample {i}: input length={length.item()}, output tokens={len(tokens)}")
 
 
 if __name__ == "__main__":
-    main()
+    pytest.main([__file__, "-v", "-s"])
