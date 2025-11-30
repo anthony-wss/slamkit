@@ -5,6 +5,12 @@ example_output
 example_arc/*.jsonl
 example_arc/arc_model/
 
+# example_slamomni
+example_slamomni/output
+example_slamomni/sft_data
+example_slamomni/sft_overfit_model
+example_slamomni/checkpoints
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
