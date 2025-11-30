@@ -33,13 +33,8 @@ def convert_to_sft_format(
 
     # Load tokenizer
     print(f"Loading tokenizer: {tokenizer_name}")
+    assert tokenizer_name == "Qwen/Qwen3-0.6B", "This script is designed for Qwen3-0.6B tokenizer"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
-
-    # Add special tokens if not present
-    special_tokens = ["<|im_start|>", "<|im_end|>"]
-    added = tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
-    if added > 0:
-        print(f"Added {added} special tokens to tokenizer")
 
     # Get special token IDs
     im_start_id = tokenizer.convert_tokens_to_ids("<|im_start|>")
@@ -64,36 +59,75 @@ def convert_to_sft_format(
         answer_text = sample['answer']
         answer_speech_tokens = sample['answer_cosyvoice_speech_token']
 
-        # Build ChatML format sequence
-        # Format: <|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n{answer_text}\n{speech_tokens}<|im_end|>
+        # Parse speech tokens (convert string to list of integers)
+        # Format: "1234 5678 9012" -> [1234, 5678, 9012]
+        try:
+            speech_tokens_raw = [int(t) for t in answer_speech_tokens]
+            # Offset speech tokens to avoid collision with text vocabulary
+            speech_tokens = [t + speech_offset for t in speech_tokens_raw]
+        except (ValueError, AttributeError) as e:
+            print(f"Warning: Failed to parse speech tokens for sample {idx}: {e}")
+            print(f"Speech tokens: {answer_speech_tokens}")
+            continue
 
-        # User turn (question text only, no audio)
-        user_part = f"<|im_start|>user\n{question_text}<|im_end|>\n"
-        user_ids = tokenizer.encode(user_part, add_special_tokens=False)
+        # Build ChatML format sequence with TEXT ONLY first
+        # We'll manually append speech tokens after
+        # Format: <|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n{answer_text}
+        messages = [
+            {"role": "user", "content": question_text},
+            {"role": "assistant", "content": answer_text}
+        ]
 
-        # Assistant turn prefix (text portion)
-        assistant_prefix = f"<|im_start|>assistant\n{answer_text}\n"
-        assistant_text_ids = tokenizer.encode(assistant_prefix, add_special_tokens=False)
+        # Get tokenized text (this includes EOS at the end)
+        text_tokens = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=False,
+            enable_thinking=False,
+        )
+        if text_tokens[-1] == tokenizer.encode("\n", add_special_tokens=False)[0]:
+            # Remove trailing newline token if present
+            text_tokens = text_tokens[:-1]
 
-        # Assistant turn suffix (speech tokens - offset by text vocab size)
-        assistant_speech_ids = [token + speech_offset for token in answer_speech_tokens]
+        # Find where assistant response actually starts
+        # Structure: <|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n{answer_text}<|im_end|>
+        # We want to find the position right after "<|im_start|>assistant\n"
 
-        # Assistant turn end
-        assistant_end_ids = [im_end_id]
+        # Find the second <|im_start|> (the assistant one)
+        first_im_start_pos = text_tokens.index(im_start_id)
+        second_im_start_pos = text_tokens.index(im_start_id, first_im_start_pos + 1)
 
-        # Combine all parts
-        input_ids = user_ids + assistant_text_ids + assistant_speech_ids + assistant_end_ids
+        # Tokenize "assistant\n" to find its length
+        assistant_prefix = tokenizer.encode("assistant\n", add_special_tokens=False)
+        # Position where actual response content starts (after <|im_start|>assistant\n)
+        response_start_pos = second_im_start_pos + 1 + len(assistant_prefix)
 
-        # Create labels: mask user portion (-100), keep assistant portion
+        # Now we need to insert speech tokens BEFORE the final <|im_end|>
+        # Remove the final <|im_end|> temporarily
+        if text_tokens[-1] == im_end_id:
+            text_tokens_without_end = text_tokens[:-1]
+            # Append speech tokens and then <|im_end|>
+            input_ids = text_tokens_without_end + speech_tokens + [im_end_id]
+        else:
+            # No <|im_end|> found - this shouldn't happen with apply_chat_template
+            print(f"Warning: No <|im_end|> found at end of sample {idx}")
+            input_ids = text_tokens + speech_tokens + [im_end_id]
+
+        # Create labels: mask everything except the assistant response content + speech + EOS
+        # Structure: [-100, -100, ..., -100, actual_response_tokens, speech_tokens, im_end_id]
         labels = (
-            [-100] * len(user_ids) +  # Mask user turn
-            assistant_text_ids +       # Keep assistant text
-            assistant_speech_ids +     # Keep assistant speech
-            assistant_end_ids          # Keep end token
+            [-100] * response_start_pos +  # Mask user + assistant prefix
+            input_ids[response_start_pos:]  # Keep assistant response + speech + EOS
         )
 
-        # Attention mask (all 1s)
+        # Attention mask (all 1s - attend to everything)
         attention_mask = [1] * len(input_ids)
+
+        # Validation checks
+        assert len(input_ids) == len(labels) == len(attention_mask), \
+            f"Length mismatch: input_ids={len(input_ids)}, labels={len(labels)}, attention_mask={len(attention_mask)}"
+        assert input_ids[-1] == im_end_id, f"Missing EOS token at end of sequence"
+        assert labels[-1] == im_end_id, f"EOS token should not be masked in labels"
 
         # Create output sample
         output_sample = {
@@ -137,8 +171,60 @@ def convert_to_sft_format(
     print(f"Input IDs length: {len(first_sample['input_ids'])}")
     print(f"Labels length: {len(first_sample['labels'])}")
     print(f"Attention mask length: {len(first_sample['attention_mask'])}")
-    print(f"First 20 input IDs: {first_sample['input_ids'][:20]}")
-    print(f"First 20 labels: {first_sample['labels'][:20]}")
+
+    # Show the structure visually
+    print("\n--- Token Structure (first 30 positions) ---")
+    print("Pos | Input ID | Label    | Attn | Decoded Token")
+    print("-" * 70)
+    for i in range(min(30, len(first_sample['input_ids']))):
+        inp = first_sample['input_ids'][i]
+        lbl = first_sample['labels'][i]
+        attn = first_sample['attention_mask'][i]
+
+        # Try to decode the token (only if it's in text vocab range)
+        if inp < text_vocab_size:
+            try:
+                decoded = tokenizer.decode([inp], skip_special_tokens=False)
+                decoded = decoded.replace('\n', '\\n')[:20]  # Truncate long tokens
+            except:
+                decoded = "<decode error>"
+        else:
+            decoded = f"<speech:{inp - speech_offset}>"
+
+        # Show if label is masked
+        lbl_str = str(lbl) if lbl != -100 else "-100 (MASK)"
+
+        print(f"{i:3d} | {inp:8d} | {lbl_str:8s} | {attn:4d} | {decoded}")
+
+    print("\n--- Last 10 positions (should end with EOS) ---")
+    start_idx = max(0, len(first_sample['input_ids']) - 10)
+    print("Pos | Input ID | Label    | Attn | Decoded Token")
+    print("-" * 70)
+    for i in range(start_idx, len(first_sample['input_ids'])):
+        inp = first_sample['input_ids'][i]
+        lbl = first_sample['labels'][i]
+        attn = first_sample['attention_mask'][i]
+
+        if inp < text_vocab_size:
+            try:
+                decoded = tokenizer.decode([inp], skip_special_tokens=False)
+                decoded = decoded.replace('\n', '\\n')[:20]
+            except:
+                decoded = "<decode error>"
+        else:
+            decoded = f"<speech:{inp - speech_offset}>"
+
+        lbl_str = str(lbl) if lbl != -100 else "-100 (MASK)"
+        print(f"{i:3d} | {inp:8d} | {lbl_str:8s} | {attn:4d} | {decoded}")
+
+    # Verify correctness
+    print("\n=== Validation ===")
+    num_masked = sum(1 for l in first_sample['labels'] if l == -100)
+    num_trainable = sum(1 for l in first_sample['labels'] if l != -100)
+    print(f"Masked tokens (no loss): {num_masked}")
+    print(f"Trainable tokens (with loss): {num_trainable}")
+    print(f"Last token is EOS: {first_sample['input_ids'][-1] == im_end_id}")
+    print(f"EOS is in labels (not masked): {first_sample['labels'][-1] == im_end_id}")
 
 
 if __name__ == "__main__":
