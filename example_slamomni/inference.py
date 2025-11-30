@@ -21,8 +21,8 @@ class SlamOmniInference:
     def __init__(
         self,
         model_path: str = "example_slamomni/output/checkpoint-125",
-        tokenizer_name: str = "Qwen/Qwen2.5-0.5B",
-        text_vocab_size: int = 151665,
+        tokenizer_name: str = "Qwen/Qwen3-0.6B",
+        text_vocab_size: int = 151669,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """

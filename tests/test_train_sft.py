@@ -164,7 +164,7 @@ class TestModelInitialization:
             'context_len': 512,
             'tlm_type': 'twist',
             'config_args': {
-                'base_model_name': 'Qwen/Qwen2.5-0.5B',  # Use smaller model for testing
+                'base_model_name': 'Qwen/Qwen3-0.6B',  # Use smaller model for testing
                 'vocab_size': 1000,  # Small vocab for testing
                 'use_cache': False,
                 'torch_dtype': 'bfloat16',
@@ -232,7 +232,7 @@ class TestTrainingPipeline:
                 'context_len': 512,
                 'tlm_type': 'twist',
                 'config_args': {
-                    'base_model_name': 'Qwen/Qwen2.5-0.5B',
+                    'base_model_name': 'Qwen/Qwen3-0.6B',
                     'vocab_size': vocab_size,
                     'use_cache': False,
                     'torch_dtype': 'bfloat16',
@@ -308,7 +308,7 @@ class TestTrainingPipeline:
                         "training_args.save_strategy=no",
                         "training_args.eval_strategy=no",
                         "training_args.dataloader_num_workers=0",
-                        "model.config_args.base_model_name=Qwen/Qwen2.5-0.5B",  # Use smaller model
+                        "model.config_args.base_model_name=Qwen/Qwen3-0.6B",  # Use smaller model
                     ]
                 )
 

@@ -193,7 +193,7 @@ See `CLAUDE.md` for full multimodal SFT pipeline documentation.
 **Change base model**:
 ```bash
 # Edit config/model/sft_qwen.yaml
-base_model_name: Qwen/Qwen2.5-0.5B  # or any other compatible model
+base_model_name: Qwen/Qwen3-0.6B  # or any other compatible model
 ```
 
 **Training hyperparameters**:

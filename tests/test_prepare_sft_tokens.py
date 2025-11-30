@@ -29,7 +29,7 @@ def tokeniser_with_special_tokens():
             'pad_token_id': 0,
             'num_units': None,
             'load_fe': False,
-            'text_tokeniser_path': 'Qwen/Qwen2.5-0.5B',
+            'text_tokeniser_path': 'Qwen/Qwen3-0.6B',
             'interleave_method': 'poisson',
             'interleave_span': 10,
             'interleave_prob': 0.3,
