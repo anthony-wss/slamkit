@@ -63,9 +63,15 @@ singularity exec --nv -B $PWD:/workspace -B /work/u3937558/data:/data \
 Converts parquet data to SFT training format.
 
 ```bash
-singularity exec --nv -B $PWD:/workspace -B /work/u3937558/data:/data \
-  pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace/example_slamomni && python convert_to_sft.py --num_samples 500"
+singularity exec --nv \
+  -B /work/u3937558/slamkit:/workspace \
+  -B /work/u3937558/data:/data \
+  -B /work/u3937558/.cache:/tmp/cache \
+  /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "export HF_HOME=/tmp/cache/huggingface && \
+    export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
+    export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
+    cd /workspace/example_slamomni && python convert_to_sft.py --num_samples 500"
 ```
 
 **Arguments:**
@@ -176,3 +182,10 @@ Generated 8.04s of audio
 ```
 
 **Note:** The prompt audio provides the voice characteristics (speaker identity, pitch, timbre) for the generated speech. Use 3-10 seconds of clean speech from the desired speaker.
+
+## Full training
+
+### 1. Process all data (~463k samples).
+```bash
+sbatch run_conversion.sh
+```

@@ -11,6 +11,10 @@ example_slamomni/sft_data
 example_slamomni/sft_overfit_model
 example_slamomni/checkpoints
 
+# slurm
+example_slamomni/**/*.err
+example_slamomni/**/*.out
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

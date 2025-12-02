@@ -19,17 +19,25 @@ def convert_to_sft_format(
     Convert parquet data to SFT training format.
 
     Args:
-        input_file: Path to input parquet file
+        input_file: Path to input parquet file or glob pattern (e.g., /data/*.parquet)
         output_file: Path to output JSONL file
-        num_samples: Number of samples to process (default: 500)
+        num_samples: Number of samples to process (None for all samples)
         tokenizer_name: HuggingFace tokenizer to use for text encoding
     """
     print(f"Loading dataset from {input_file}...")
-    dataset = load_dataset("parquet", data_files=input_file, split='train')
 
-    # Limit to num_samples
-    dataset = dataset.select(range(min(num_samples, len(dataset))))
-    print(f"Processing {len(dataset)} samples...")
+    # Use streaming mode to avoid loading everything into memory/disk
+    dataset = load_dataset("parquet", data_files=input_file, split='train', streaming=True)
+    if num_samples is not None and num_samples > 0:
+        print(f"Using streaming mode to process {num_samples} samples...")
+        # Take only the first num_samples
+        dataset = dataset.take(num_samples)
+        total_to_process = num_samples
+    else:
+        print(f"Loading full dataset...")
+        total_to_process = "ALL"  # len(dataset)
+
+    print(f"Processing up to {total_to_process} samples...")
 
     # Load tokenizer
     print(f"Loading tokenizer: {tokenizer_name}")
@@ -52,113 +60,138 @@ def convert_to_sft_format(
     print(f"Speech token offset: {speech_offset}")
     print(f"Total vocabulary size: {speech_offset + speech_vocab_size}")
 
-    # Process samples
-    output_samples = []
-    for idx, sample in enumerate(dataset):
-        question_text = sample['question']
-        answer_text = sample['answer']
-        answer_speech_tokens = sample['answer_cosyvoice_speech_token']
+    # Define batch processing function
+    def process_batch(batch):
+        """Process a batch of samples and convert to SFT format."""
+        batch_size = len(batch['question'])
 
-        # Parse speech tokens (convert string to list of integers)
-        # Format: "1234 5678 9012" -> [1234, 5678, 9012]
-        try:
-            speech_tokens_raw = [int(t) for t in answer_speech_tokens]
-            # Offset speech tokens to avoid collision with text vocabulary
-            speech_tokens = [t + speech_offset for t in speech_tokens_raw]
-        except (ValueError, AttributeError) as e:
-            print(f"Warning: Failed to parse speech tokens for sample {idx}: {e}")
-            print(f"Speech tokens: {answer_speech_tokens}")
-            continue
+        # Initialize output lists
+        input_ids_list = []
+        labels_list = []
+        attention_mask_list = []
+        valid_indices = []
 
-        # Build ChatML format sequence with TEXT ONLY first
-        # We'll manually append speech tokens after
-        # Format: <|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n{answer_text}
-        messages = [
-            {"role": "user", "content": question_text},
-            {"role": "assistant", "content": answer_text}
-        ]
+        for i in range(batch_size):
+            question_text = batch['question'][i]
+            answer_text = batch['answer'][i]
+            answer_speech_tokens = batch['answer_cosyvoice_speech_token'][i]
 
-        # Get tokenized text (this includes EOS at the end)
-        text_tokens = tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=False,
-            enable_thinking=False,
-        )
-        if text_tokens[-1] == tokenizer.encode("\n", add_special_tokens=False)[0]:
-            # Remove trailing newline token if present
-            text_tokens = text_tokens[:-1]
+            # Parse speech tokens (convert to list of integers)
+            try:
+                speech_tokens_raw = [int(t) for t in answer_speech_tokens]
+                # Offset speech tokens to avoid collision with text vocabulary
+                speech_tokens = [t + speech_offset for t in speech_tokens_raw]
+            except (ValueError, AttributeError) as e:
+                print(f"Warning: Failed to parse speech tokens for batch sample {i}: {e}")
+                continue
 
-        # Find where assistant response actually starts
-        # Structure: <|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n{answer_text}<|im_end|>
-        # We want to find the position right after "<|im_start|>assistant\n"
+            # Build ChatML format sequence
+            messages = [
+                {"role": "user", "content": question_text},
+                {"role": "assistant", "content": answer_text}
+            ]
 
-        # Find the second <|im_start|> (the assistant one)
-        first_im_start_pos = text_tokens.index(im_start_id)
-        second_im_start_pos = text_tokens.index(im_start_id, first_im_start_pos + 1)
+            # Get tokenized text
+            text_tokens = tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=False,
+                enable_thinking=False,
+            )
+            if text_tokens[-1] == tokenizer.encode("\n", add_special_tokens=False)[0]:
+                text_tokens = text_tokens[:-1]
 
-        # Tokenize "assistant\n" to find its length
-        assistant_prefix = tokenizer.encode("assistant\n", add_special_tokens=False)
-        # Position where actual response content starts (after <|im_start|>assistant\n)
-        response_start_pos = second_im_start_pos + 1 + len(assistant_prefix)
+            # Find where assistant response starts
+            first_im_start_pos = text_tokens.index(im_start_id)
+            second_im_start_pos = text_tokens.index(im_start_id, first_im_start_pos + 1)
+            assistant_prefix = tokenizer.encode("assistant\n", add_special_tokens=False)
+            response_start_pos = second_im_start_pos + 1 + len(assistant_prefix)
 
-        # Now we need to insert speech tokens BEFORE the final <|im_end|>
-        # Remove the final <|im_end|> temporarily
-        if text_tokens[-1] == im_end_id:
-            text_tokens_without_end = text_tokens[:-1]
-            # Append speech tokens and then <|im_end|>
-            input_ids = text_tokens_without_end + speech_tokens + [im_end_id]
-        else:
-            # No <|im_end|> found - this shouldn't happen with apply_chat_template
-            print(f"Warning: No <|im_end|> found at end of sample {idx}")
-            input_ids = text_tokens + speech_tokens + [im_end_id]
+            # Insert speech tokens before final <|im_end|>
+            if text_tokens[-1] == im_end_id:
+                text_tokens_without_end = text_tokens[:-1]
+                input_ids = text_tokens_without_end + speech_tokens + [im_end_id]
+            else:
+                input_ids = text_tokens + speech_tokens + [im_end_id]
 
-        # Create labels: mask everything except the assistant response content + speech + EOS
-        # Structure: [-100, -100, ..., -100, actual_response_tokens, speech_tokens, im_end_id]
-        labels = (
-            [-100] * response_start_pos +  # Mask user + assistant prefix
-            input_ids[response_start_pos:]  # Keep assistant response + speech + EOS
-        )
+            # Create labels: mask everything except assistant response
+            labels = (
+                [-100] * response_start_pos +
+                input_ids[response_start_pos:]
+            )
 
-        # Attention mask (all 1s - attend to everything)
-        attention_mask = [1] * len(input_ids)
+            # Attention mask
+            attention_mask = [1] * len(input_ids)
 
-        # Validation checks
-        assert len(input_ids) == len(labels) == len(attention_mask), \
-            f"Length mismatch: input_ids={len(input_ids)}, labels={len(labels)}, attention_mask={len(attention_mask)}"
-        assert input_ids[-1] == im_end_id, f"Missing EOS token at end of sequence"
-        assert labels[-1] == im_end_id, f"EOS token should not be masked in labels"
+            # Validation
+            assert len(input_ids) == len(labels) == len(attention_mask), \
+                f"Length mismatch: input_ids={len(input_ids)}, labels={len(labels)}, attention_mask={len(attention_mask)}"
+            assert input_ids[-1] == im_end_id, f"Missing EOS token at end of sequence"
+            assert labels[-1] == im_end_id, f"EOS token should not be masked in labels"
 
-        # Create output sample
-        output_sample = {
-            "input_ids": input_ids,
-            "labels": labels,
-            "attention_mask": attention_mask,
+            input_ids_list.append(input_ids)
+            labels_list.append(labels)
+            attention_mask_list.append(attention_mask)
+            valid_indices.append(i)
+
+        return {
+            "input_ids": input_ids_list,
+            "labels": labels_list,
+            "attention_mask": attention_mask_list,
         }
 
-        output_samples.append(output_sample)
+    # Apply batch processing using .map()
+    print(f"Processing samples with batched .map()...")
+    processed_dataset = dataset.map(
+        process_batch,
+        batched=True,
+        batch_size=100,  # Process 100 samples at a time
+        remove_columns=dataset.column_names if hasattr(dataset, 'column_names') else None,
+    )
 
-        if (idx + 1) % 100 == 0:
-            print(f"Processed {idx + 1}/{len(dataset)} samples")
-
-    # Write to output file
-    print(f"Writing {len(output_samples)} samples to {output_file}...")
+    # Write to output file incrementally and track statistics
+    print(f"Writing to {output_file}...")
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
+    # Statistics tracking
+    num_samples = 0
+    total_length = 0
+    min_length = float('inf')
+    max_length = 0
+    first_sample = None
+
     with open(output_file, 'w') as f:
-        for sample in output_samples:
-            f.write(json.dumps(sample) + '\n')
+        for idx, sample in enumerate(processed_dataset):
+            # Write sample immediately
+            output_sample = {
+                "input_ids": sample['input_ids'],
+                "labels": sample['labels'],
+                "attention_mask": sample['attention_mask'],
+            }
+            f.write(json.dumps(output_sample) + '\n')
+
+            # Update statistics
+            seq_length = len(sample['input_ids'])
+            num_samples += 1
+            total_length += seq_length
+            min_length = min(min_length, seq_length)
+            max_length = max(max_length, seq_length)
+
+            # Save first sample for preview
+            if first_sample is None:
+                first_sample = output_sample
+
+            if (idx + 1) % 100 == 0:
+                print(f"Processed and written {idx + 1} samples")
 
     # Print statistics
-    avg_length = sum(len(s['input_ids']) for s in output_samples) / len(output_samples)
-    max_length = max(len(s['input_ids']) for s in output_samples)
-    min_length = min(len(s['input_ids']) for s in output_samples)
+    avg_length = total_length / num_samples if num_samples > 0 else 0
 
     print(f"\n=== Statistics ===")
-    print(f"Total samples: {len(output_samples)}")
+    print(f"Total samples: {num_samples}")
     print(f"Average sequence length: {avg_length:.1f}")
     print(f"Max sequence length: {max_length}")
-    print(f"Min sequence length: {min_length}")
+    print(f"Min sequence length: {min_length if min_length != float('inf') else 0}")
     print(f"Text vocabulary size: {text_vocab_size}")
     print(f"Speech vocabulary size: {speech_vocab_size}")
     print(f"Total vocabulary size: {text_vocab_size + speech_vocab_size}")
@@ -166,65 +199,67 @@ def convert_to_sft_format(
     print(f"\nDone! Output written to: {output_file}")
 
     # Print first sample as example
-    print(f"\n=== First sample (preview) ===")
-    first_sample = output_samples[0]
-    print(f"Input IDs length: {len(first_sample['input_ids'])}")
-    print(f"Labels length: {len(first_sample['labels'])}")
-    print(f"Attention mask length: {len(first_sample['attention_mask'])}")
+    if first_sample is not None:
+        print(f"\n=== First sample (preview) ===")
+        print(f"Input IDs length: {len(first_sample['input_ids'])}")
+        print(f"Labels length: {len(first_sample['labels'])}")
+        print(f"Attention mask length: {len(first_sample['attention_mask'])}")
 
-    # Show the structure visually
-    print("\n--- Token Structure (first 30 positions) ---")
-    print("Pos | Input ID | Label    | Attn | Decoded Token")
-    print("-" * 70)
-    for i in range(min(30, len(first_sample['input_ids']))):
-        inp = first_sample['input_ids'][i]
-        lbl = first_sample['labels'][i]
-        attn = first_sample['attention_mask'][i]
+        # Show the structure visually
+        print("\n--- Token Structure (first 30 positions) ---")
+        print("Pos | Input ID | Label    | Attn | Decoded Token")
+        print("-" * 70)
+        for i in range(min(30, len(first_sample['input_ids']))):
+            inp = first_sample['input_ids'][i]
+            lbl = first_sample['labels'][i]
+            attn = first_sample['attention_mask'][i]
 
-        # Try to decode the token (only if it's in text vocab range)
-        if inp < text_vocab_size:
-            try:
-                decoded = tokenizer.decode([inp], skip_special_tokens=False)
-                decoded = decoded.replace('\n', '\\n')[:20]  # Truncate long tokens
-            except:
-                decoded = "<decode error>"
-        else:
-            decoded = f"<speech:{inp - speech_offset}>"
+            # Try to decode the token (only if it's in text vocab range)
+            if inp < text_vocab_size:
+                try:
+                    decoded = tokenizer.decode([inp], skip_special_tokens=False)
+                    decoded = decoded.replace('\n', '\\n')[:20]  # Truncate long tokens
+                except:
+                    decoded = "<decode error>"
+            else:
+                decoded = f"<speech:{inp - speech_offset}>"
 
-        # Show if label is masked
-        lbl_str = str(lbl) if lbl != -100 else "-100 (MASK)"
+            # Show if label is masked
+            lbl_str = str(lbl) if lbl != -100 else "-100 (MASK)"
 
-        print(f"{i:3d} | {inp:8d} | {lbl_str:8s} | {attn:4d} | {decoded}")
+            print(f"{i:3d} | {inp:8d} | {lbl_str:8s} | {attn:4d} | {decoded}")
 
-    print("\n--- Last 10 positions (should end with EOS) ---")
-    start_idx = max(0, len(first_sample['input_ids']) - 10)
-    print("Pos | Input ID | Label    | Attn | Decoded Token")
-    print("-" * 70)
-    for i in range(start_idx, len(first_sample['input_ids'])):
-        inp = first_sample['input_ids'][i]
-        lbl = first_sample['labels'][i]
-        attn = first_sample['attention_mask'][i]
+        print("\n--- Last 10 positions (should end with EOS) ---")
+        start_idx = max(0, len(first_sample['input_ids']) - 10)
+        print("Pos | Input ID | Label    | Attn | Decoded Token")
+        print("-" * 70)
+        for i in range(start_idx, len(first_sample['input_ids'])):
+            inp = first_sample['input_ids'][i]
+            lbl = first_sample['labels'][i]
+            attn = first_sample['attention_mask'][i]
 
-        if inp < text_vocab_size:
-            try:
-                decoded = tokenizer.decode([inp], skip_special_tokens=False)
-                decoded = decoded.replace('\n', '\\n')[:20]
-            except:
-                decoded = "<decode error>"
-        else:
-            decoded = f"<speech:{inp - speech_offset}>"
+            if inp < text_vocab_size:
+                try:
+                    decoded = tokenizer.decode([inp], skip_special_tokens=False)
+                    decoded = decoded.replace('\n', '\\n')[:20]
+                except:
+                    decoded = "<decode error>"
+            else:
+                decoded = f"<speech:{inp - speech_offset}>"
 
-        lbl_str = str(lbl) if lbl != -100 else "-100 (MASK)"
-        print(f"{i:3d} | {inp:8d} | {lbl_str:8s} | {attn:4d} | {decoded}")
+            lbl_str = str(lbl) if lbl != -100 else "-100 (MASK)"
+            print(f"{i:3d} | {inp:8d} | {lbl_str:8s} | {attn:4d} | {decoded}")
 
-    # Verify correctness
-    print("\n=== Validation ===")
-    num_masked = sum(1 for l in first_sample['labels'] if l == -100)
-    num_trainable = sum(1 for l in first_sample['labels'] if l != -100)
-    print(f"Masked tokens (no loss): {num_masked}")
-    print(f"Trainable tokens (with loss): {num_trainable}")
-    print(f"Last token is EOS: {first_sample['input_ids'][-1] == im_end_id}")
-    print(f"EOS is in labels (not masked): {first_sample['labels'][-1] == im_end_id}")
+        # Verify correctness
+        print("\n=== Validation ===")
+        num_masked = sum(1 for l in first_sample['labels'] if l == -100)
+        num_trainable = sum(1 for l in first_sample['labels'] if l != -100)
+        print(f"Masked tokens (no loss): {num_masked}")
+        print(f"Trainable tokens (with loss): {num_trainable}")
+        print(f"Last token is EOS: {first_sample['input_ids'][-1] == im_end_id}")
+        print(f"EOS is in labels (not masked): {first_sample['labels'][-1] == im_end_id}")
+    else:
+        print("\nNo samples processed - unable to show preview.")
 
 
 if __name__ == "__main__":
@@ -234,8 +269,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_file",
         type=str,
-        default="/data/train-00000-of-00853.parquet",
-        help="Input parquet file path"
+        default="/data/*.parquet",
+        help="Input parquet file path or glob pattern (e.g., /data/*.parquet)"
     )
     parser.add_argument(
         "--output_file",
@@ -246,8 +281,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_samples",
         type=int,
-        default=500,
-        help="Number of samples to process"
+        default=None,
+        help="Number of samples to process (default: None, process all)"
     )
     parser.add_argument(
         "--tokenizer",
