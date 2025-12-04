@@ -37,8 +37,8 @@ singularity exec --nv \
     export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
     cd /workspace && python cli/train_sft.py \
     model=text_then_speech \
-    data.train_path=example_slamomni/sft_data/train_all.jsonl \
-    data.val_path=example_slamomni/sft_data/train_500.jsonl \
+    data.train_path=example_slamomni/sft_data/train_v1.jsonl \
+    data.val_path=example_slamomni/sft_data/eval_v1.jsonl \
     training_args.output_dir=example_slamomni/checkpoints \
     training_args.num_train_epochs=1 \
     training_args.learning_rate=1e-4 \
@@ -47,7 +47,9 @@ singularity exec --nv \
     training_args.save_strategy=steps \
     logger.report_to=wandb \
     +logger.project=text_then_speech \
-    +training_args.save_steps=1000"
+    +training_args.save_steps=1000 \
+    training_args.eval_strategy=steps \
+    training_args.eval_steps=1000"
 
 echo "End time: $(date)"
 echo "Training complete!"

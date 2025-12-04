@@ -195,6 +195,22 @@ Generated 8.04s of audio
 sbatch run_conversion.sh
 ```
 
+#### 1.1 Split train and eval
+* example_slamomni/sft_data/train_v1.jsonl (393611 samples)
+* example_slamomni/sft_data/eval_v1.jsonl (69460 samples)
+
+```bash
+singularity exec --nv \
+  -B /work/u3937558/slamkit:/workspace \
+  /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "cd /workspace && python scripts/split_sft_data.py \
+    --input example_slamomni/sft_data/train_all.jsonl \
+    --train_output example_slamomni/sft_data/train_v1.jsonl \
+    --eval_output example_slamomni/sft_data/eval_v1.jsonl \
+    --eval_ratio 0.15 \
+    --seed 42"
+```
+
 ### 2. Training
 ```bash
 singularity exec --nv \
@@ -207,16 +223,19 @@ singularity exec --nv \
     export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
     cd /workspace && python cli/train_sft.py \
     model=text_then_speech \
-    data.train_path=example_slamomni/sft_data/train_all.jsonl \
-    data.val_path=example_slamomni/sft_data/train_500.jsonl \
+    data.train_path=example_slamomni/sft_data/train_v1.jsonl \
+    data.val_path=example_slamomni/sft_data/eval_v1.jsonl \
     training_args.output_dir=example_slamomni/checkpoints \
     training_args.num_train_epochs=1 \
+    training_args.learning_rate=1e-4 \
     training_args.logging_steps=10 \
     training_args.per_device_train_batch_size=16 \
     training_args.save_strategy=steps \
     logger.report_to=wandb \
     +logger.project=text_then_speech \
-    +training_args.save_steps=1000"
+    +training_args.save_steps=1000 \
+    training_args.eval_strategy=steps \
+    training_args.eval_steps=1000"
 ```
 
 To use wandb in singularity, run `wget https://curl.se/ca/cacert.pem` to get `cacert.pem`.
