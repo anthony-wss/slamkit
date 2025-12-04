@@ -21,6 +21,11 @@ def main(cfg: DictConfig):
     from prepare_sft_tokens.py. The model is fine-tuned on instruction-following dialogues
     with ChatML formatting.
     """
+    # Check if output directory already exists when not continuing training
+    if not cfg.cont_training and os.path.exists(cfg.training_args.output_dir):
+        raise ValueError(f"output_dir: {cfg.training_args.output_dir} already exists. "
+                        f"Please use a different output directory or set cont_training=true to resume training.")
+
     # Load pre-tokenized dataset
     ds, collator = init_sft_dataset(cfg)
     logger.info('SFT dataset loaded')
