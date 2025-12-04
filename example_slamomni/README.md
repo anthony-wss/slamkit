@@ -240,27 +240,31 @@ singularity exec --nv \
 
 To use wandb in singularity, run `wget https://curl.se/ca/cacert.pem` to get `cacert.pem`.
 
-We set `training_args.dataloader_num_workers=0` to disable.
 Use `group_by_length` will hang.
 
-To save the new model right after initialization (for evaluation before training):
+To save the new model right after initialization (for evaluation before training), uncomment these lines in `train_sft.py`:
+```python
+model.save_pretrained(train_args.output_dir)
+exit()
+``` 
+
+### 3. Evaluation
+
+#### 3.1 MMLU-Redux
+
 ```bash
 singularity exec --nv \
+  --env SSL_CERT_FILE=/workspace/cacert.pem \
   -B /work/u3937558/slamkit:/workspace \
   -B /work/u3937558/.cache:/tmp/cache \
   /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
   bash -c "export HF_HOME=/tmp/cache/huggingface && \
     export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
     export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
-    cd /workspace && python cli/train_sft.py \
-    model=text_then_speech \
-    data.train_path=example_slamomni/sft_data/train_all.jsonl \
-    data.val_path=example_slamomni/sft_data/train_500.jsonl \
-    training_args.output_dir=example_slamomni/checkpoints \
-    training_args.num_train_epochs=1 \
-    training_args.logging_steps=10 \
-    training_args.per_device_train_batch_size=1 \
-    training_args.save_strategy=steps \
-    +gradient_accumulation_steps=1 \
-    +training_args.save_steps=1"
+    cd /workspace && python scripts/eval_mmlu_redux_zeroshot.py \
+      --model_path example_slamomni/pretrain_qwen3-0.6B_checkpoint \
+      --config high_school_mathematics \
+      --output_dir outputs/mmlu_redux_eval \
+      --bf16 \
+      --quick"
 ```

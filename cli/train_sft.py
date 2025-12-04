@@ -81,6 +81,10 @@ def main(cfg: DictConfig):
             callbacks = [callback]
         else:
             callbacks.append(callback)
+    
+    # Uncomment to test saving the model before training (pretrain_qwen3-0.6B_checkpoint)
+    # model.save_pretrained(train_args.output_dir)
+    # exit()
 
     trainer = SLAMTrainer(
         model=model,
