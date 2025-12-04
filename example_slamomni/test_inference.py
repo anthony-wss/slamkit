@@ -9,12 +9,12 @@ from pathlib import Path
 def test_inference():
     print("Initializing inference engine...")
     inference = SlamOmniInference(
-        model_path="sft_overfit_model/checkpoint-600"  # Relative to example_slamomni/
+        # model_path="sft_overfit_model/checkpoint-600"  # Relative to example_slamomni/
+        model_path="checkpoints/text_then_speech_lr_2e-5/text_then_speech-checkpoint-7236"
     )
 
     # Test question
-    # question = "What is artificial intelligence?"
-    question = "What makes you different from other assistant models?"
+    question = "What is artificial intelligence?"
 
     print(f"\nTest question: {question}")
     print("="  * 60)
@@ -22,8 +22,7 @@ def test_inference():
     # Generate response
     result = inference.generate_response(
         question,
-        max_new_tokens=500,
-        do_sample=False,  # Greedy decoding for reproducibility
+        max_new_tokens=4096,
     )
 
     # Display results
@@ -33,7 +32,7 @@ def test_inference():
     print(f"📊 Statistics:")
     print(f"  - Text tokens: {result['num_text_tokens']}")
     print(f"  - Speech tokens: {result['num_speech_tokens']}")
-    print(f"  - Estimated audio duration: {result['num_speech_tokens'] / 25:.2f} seconds")
+    print(f"  - Estimated audio duration: {result['num_speech_tokens'] / 50:.2f} seconds")
     print()
 
     # Save tokens

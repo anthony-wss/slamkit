@@ -2,5 +2,6 @@ defaults:
   - default
   - _self_
 
-# No additional settings needed - SFT data is already pre-tokenized
-# with input_ids, labels, and attention_mask fields
+# SFT data is already pre-tokenized with input_ids, labels, and attention_mask fields
+max_length: 1024  # Maximum sequence length. Sequences longer than this are truncated from the right. Set to null for no truncation.
+packing: false  # Packing not yet supported for SFT

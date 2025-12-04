@@ -152,6 +152,87 @@ class TestSFTDataset:
         assert determined_max_token == max_token_id, f"Expected max token {max_token_id}, got {determined_max_token}"
         assert determined_vocab_size == max_token_id + 1, "Vocab size should be max_token_id + 1"
 
+    def test_max_length_truncation(self, tmpdir_with_data):
+        """Test truncation with max_length parameter."""
+        tmpdir, train_path, val_path = tmpdir_with_data
+
+        # Create test data with varying lengths
+        samples = []
+        for length in [30, 60, 100]:  # Different lengths
+            input_ids = list(range(1000, 1000 + length))
+            labels = list(range(2000, 2000 + length))
+            attention_mask = [1] * length
+
+            samples.append({
+                'input_ids': input_ids,
+                'labels': labels,
+                'attention_mask': attention_mask
+            })
+
+        test_path = os.path.join(tmpdir, "test_truncation.jsonl")
+        with open(test_path, 'w') as f:
+            for sample in samples:
+                f.write(json.dumps(sample) + '\n')
+
+        # Test with max_length=40
+        max_length = 40
+        cfg = DictConfig({
+            'data': {
+                'train_path': test_path,
+                'val_path': test_path,
+                'num_proc': 1,
+                'max_length': max_length
+            }
+        })
+
+        dataset, _ = init_sft_dataset(cfg)
+
+        print(f"✓ Dataset loaded with max_length={max_length}")
+
+        # Verify all sequences are truncated to max_length
+        for i, sample in enumerate(dataset['train']):
+            assert len(sample['input_ids']) <= max_length, f"Sample {i}: input_ids length {len(sample['input_ids'])} exceeds max_length {max_length}"
+            assert len(sample['labels']) <= max_length, f"Sample {i}: labels length {len(sample['labels'])} exceeds max_length {max_length}"
+            assert len(sample['attention_mask']) <= max_length, f"Sample {i}: attention_mask length {len(sample['attention_mask'])} exceeds max_length {max_length}"
+
+            # Verify truncation from the right (first tokens are preserved)
+            original_length = [30, 60, 100][i]
+            expected_length = min(original_length, max_length)
+            assert len(sample['input_ids']) == expected_length, f"Sample {i}: Expected length {expected_length}, got {len(sample['input_ids'])}"
+
+            # Verify first tokens are preserved (truncation from right)
+            if original_length > max_length:
+                expected_first_token = 1000  # First token from original sequence
+                assert sample['input_ids'][0] == expected_first_token, f"Sample {i}: First token should be preserved"
+                assert sample['labels'][0] == 2000, f"Sample {i}: First label should be preserved"
+
+        print(f"✓ All sequences correctly truncated from the right")
+        print(f"  - Sample 0 (original=30): {len(dataset['train'][0]['input_ids'])} tokens")
+        print(f"  - Sample 1 (original=60): {len(dataset['train'][1]['input_ids'])} tokens")
+        print(f"  - Sample 2 (original=100): {len(dataset['train'][2]['input_ids'])} tokens")
+
+        # Test with max_length=None (no truncation)
+        cfg_no_truncation = DictConfig({
+            'data': {
+                'train_path': test_path,
+                'val_path': test_path,
+                'num_proc': 1,
+                'max_length': None
+            }
+        })
+
+        dataset_no_truncation, _ = init_sft_dataset(cfg_no_truncation)
+
+        print(f"✓ Dataset loaded with max_length=None (no truncation)")
+
+        # Verify sequences maintain original lengths
+        original_lengths = [30, 60, 100]
+        for i, sample in enumerate(dataset_no_truncation['train']):
+            expected_length = original_lengths[i]
+            assert len(sample['input_ids']) == expected_length, f"Sample {i}: Expected length {expected_length}, got {len(sample['input_ids'])}"
+
+        print(f"✓ All sequences maintain original lengths without truncation")
+
 
 class TestModelInitialization:
     """Test model initialization with TWIST."""

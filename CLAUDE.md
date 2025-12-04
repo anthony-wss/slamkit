@@ -55,24 +55,30 @@ All tests are managed by pytest and can be run inside the Singularity container:
 
 ```bash
 # Run all tests
-singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && pytest tests/"
+singularity exec --nv \
+    -B /work/u3937558/slamkit:/workspace \
+    -B /work/u3937558/.cache:/tmp/cache \
+    /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+    bash -c "export HF_HOME=/tmp/cache/huggingface && \
+      export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
+      export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
+      cd /workspace && python -m pytest tests/"
 
 # Run all tests excluding slow ones
 singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && pytest tests/ -m 'not slow'"
+  bash -c "cd /workspace && python -m pytest tests/ -m 'not slow'"
 
 # Run a specific test file
 singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && pytest tests/test_cosyvoice_unit.py"
+  bash -c "cd /workspace && python -m pytest tests/test_cosyvoice_unit.py"
 
 # Run with verbose output
 singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && pytest tests/ -v"
+  bash -c "cd /workspace && python -m pytest tests/ -v"
 
 # Run a specific test
 singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && pytest tests/test_cosyvoice_unit.py::TestCosyVoiceFeatureExtractor::test_initialization -v"
+  bash -c "cd /workspace && pytest python -m tests/test_cosyvoice_unit.py::TestCosyVoiceFeatureExtractor::test_initialization -v"
 ```
 
 **Test organization**:

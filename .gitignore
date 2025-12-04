@@ -15,6 +15,10 @@ example_slamomni/checkpoints
 example_slamomni/**/*.err
 example_slamomni/**/*.out
 
+# wandb
+cacert.pem
+wandb/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -181,7 +185,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 outputs/
-scripts/
+# scripts/
 .vscode/
 *.json
 dpo_data

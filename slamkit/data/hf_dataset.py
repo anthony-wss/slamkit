@@ -166,16 +166,29 @@ def init_sft_dataset(cfg: DictConfig) -> Tuple[DatasetDict, DataCollatorForLangu
     cols_to_remove.sort()
     dataset = dataset.remove_columns(cols_to_remove)
 
-    # Create a custom collator that pads variable-length sequences
+    # Create a custom collator that pads variable-length sequences and truncates on-the-fly
     # We can't use default_data_collator because it doesn't pad
     class SFTDataCollator:
-        """Collator that pads input_ids, labels, and attention_mask to max length in batch."""
-        def __init__(self, pad_token_id=0, label_pad_token_id=-100):
+        """Collator that truncates and pads input_ids, labels, and attention_mask to max length in batch."""
+        def __init__(self, pad_token_id=0, label_pad_token_id=-100, max_length=None):
             self.pad_token_id = pad_token_id
             self.label_pad_token_id = label_pad_token_id
+            self.max_length = max_length
 
         def __call__(self, features):
             import torch
+
+            # Truncate features if max_length is set
+            if self.max_length is not None:
+                truncated_features = []
+                for f in features:
+                    truncated_features.append({
+                        'input_ids': f['input_ids'][:self.max_length],
+                        'attention_mask': f['attention_mask'][:self.max_length],
+                        'labels': f['labels'][:self.max_length],
+                    })
+                features = truncated_features
+
             # Find max length in batch
             max_length = max(len(f['input_ids']) for f in features)
 
@@ -206,6 +219,10 @@ def init_sft_dataset(cfg: DictConfig) -> Tuple[DatasetDict, DataCollatorForLangu
 
             return batch
 
-    collator = SFTDataCollator(pad_token_id=0, label_pad_token_id=-100)
+    collator = SFTDataCollator(
+        pad_token_id=0,
+        label_pad_token_id=-100,
+        max_length=cfg.data.get('max_length', None)
+    )
 
     return dataset, collator

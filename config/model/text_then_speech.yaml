@@ -1,0 +1,22 @@
+defaults:
+  - default
+  - _self_
+
+# Model config for text-then-speech SFT training
+# Assistant generates text response followed by speech tokens
+# User queries are text-only (no audio input)
+pretrained_model: null  # null means create fresh model with TWIST from base_model_name
+context_len: 1024
+tlm_type: twist
+
+config_args:
+  base_model_name: Qwen/Qwen3-0.6B
+  vocab_size: -1  # Will be auto-determined from dataset
+  use_cache: false
+  torch_dtype: bfloat16
+  trust_remote_code: true
+  twist_init: true
+  # Qwen3-0.6B special token IDs
+  pad_token_id: 151643  # <|endoftext|> used as padding
+  bos_token_id: 151644  # <|im_start|>
+  eos_token_id: 151645  # <|im_end|>
