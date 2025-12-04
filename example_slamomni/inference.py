@@ -87,11 +87,18 @@ class SlamOmniInference:
         Returns:
             dict with 'text', 'speech_tokens', and 'full_response'
         """
-        # Format prompt with ChatML
-        prompt = f"<|im_start|>user\n{question}<|im_end|>\n<|im_start|>assistant\n"
-
         # Tokenize
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.device)
+        messages = [
+            {"role": "user", "content": question},
+        ]
+        input_texts = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False
+        )
+        print(input_texts)
+        input_ids = self.tokenizer.encode(input_texts, return_tensors="pt").to(self.device)
 
         print(f"Generating response (max {max_new_tokens} tokens)...")
 
