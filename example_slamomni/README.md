@@ -268,3 +268,22 @@ singularity exec --nv \
       --bf16 \
       --quick"
 ```
+
+#### 3.2 mmlu (via lm-evaluation-harness)
+
+```bash
+singularity exec --nv \
+  --env SSL_CERT_FILE=/workspace/cacert.pem \
+  -B /work/u3937558/slamkit:/workspace \
+  -B /work/u3937558/.cache:/tmp/cache \
+  /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "export HF_HOME=/tmp/cache/huggingface && \
+    export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
+    export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
+    cd /workspace/lm-evaluation-harness && source venv/bin/activate && \
+    lm_eval --model hf \
+      --model_args pretrained=Qwen/Qwen3-0.6B \
+      --tasks mmlu \
+      --device cuda:0 \
+      --batch_size 8"
+```
