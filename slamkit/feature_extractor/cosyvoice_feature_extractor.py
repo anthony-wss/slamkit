@@ -20,7 +20,8 @@ class CosyVoiceFeatureExtractor(AudioFeatureExtractor):
         device: Device to run the model on (default: 'cuda:0')
         num_units: Number of units in the codebook (informational, default: 4096)
         sample_rate: Expected audio sample rate (default: 16000)
-        hop_length: Hop length for frame rate calculation (default: 320, gives 50Hz frame rate)
+        hop_length: Hop length for frame rate calculation (default: 320(v1), gives 50Hz frame rate)
+                    For v2 model, hop_length is 640, gives 25Hz frame rate.
     """
 
     def __init__(
@@ -29,7 +30,6 @@ class CosyVoiceFeatureExtractor(AudioFeatureExtractor):
         device: str = 'cuda:0',
         num_units: int = 4096,  # CosyVoice codebook size (informational)
         sample_rate: int = 16000,
-        hop_length: int = 320,  # 16000 / 320 = 50 Hz frame rate
         **kwargs  # Ignore any extra parameters from config
     ):
         super().__init__()
@@ -40,7 +40,12 @@ class CosyVoiceFeatureExtractor(AudioFeatureExtractor):
         self.onnx_path = onnx_path
         self.device = device
         self._sample_rate = sample_rate
-        self._hop_length = hop_length
+        if "v1" in onnx_path:
+            self._hop_length = 320
+        elif "v2" in onnx_path:
+            self._hop_length = 640
+        else:
+            raise ValueError(f"Unsupported CosyVoice model version in ONNX path {onnx_path}. Use v1 or v2 model.")
 
         # Verify that the ONNX model file exists
         if not os.path.exists(onnx_path):
@@ -54,13 +59,23 @@ class CosyVoiceFeatureExtractor(AudioFeatureExtractor):
         option.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
         option.intra_op_num_threads = 1
 
-        providers = ["CUDAExecutionProvider"] if torch.cuda.is_available() and 'cuda' in device else ["CPUExecutionProvider"]
+        # Configure GPU execution if available
+        self.use_cuda = torch.cuda.is_available() and 'cuda' in device
+        if self.use_cuda:
+            providers = ["CUDAExecutionProvider"]
+        else:
+            providers = ["CPUExecutionProvider"]
 
         self.ort_session = onnxruntime.InferenceSession(
             onnx_path,
             sess_options=option,
             providers=providers
         )
+
+        # Verify which execution provider is being used
+        actual_providers = self.ort_session.get_providers()
+        if self.use_cuda and "CUDAExecutionProvider" not in actual_providers:
+            print(f"Warning: CUDA requested but not available. Falling back to: {actual_providers}")
 
     @torch.inference_mode()
     def extract(self, wav: torch.Tensor, lens: Optional[torch.Tensor] = None):
@@ -97,6 +112,7 @@ class CosyVoiceFeatureExtractor(AudioFeatureExtractor):
             # Run ONNX model to extract speech tokens
             # Input: mel-spectrogram and its length
             # Output: discrete speech tokens
+            # Note: ONNX Runtime with CUDA provider requires CPU inputs but runs on GPU internally
             speech_token = self.ort_session.run(
                 None,
                 {
@@ -121,7 +137,7 @@ class CosyVoiceFeatureExtractor(AudioFeatureExtractor):
         """
         Get the duration of each speech token in seconds.
 
-        For CosyVoice with 16kHz sample rate and hop_length of 320:
+        For CosyVoice v1 with 16kHz sample rate and hop_length of 320:
         Duration = 320 / 16000 = 0.02 seconds (50 Hz frame rate)
 
         Returns:
