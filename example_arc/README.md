@@ -1,4 +1,4 @@
-# ARC-Easy Text-Only SFT Training Example
+# [Deprecated] ARC-Easy Text-Only SFT Training Example
 
 This directory contains a complete example of training and evaluating a text-only SFT model on the ARC-Easy dataset using SlamKit.
 

@@ -8,6 +8,7 @@ SlamKit is an open-source toolkit for training and evaluating Speech Language Mo
 - Speech-only pre-training
 - Preference alignment (DPO)
 - Speech-text interleaving
+- Speech-text SFT
 - Multiple evaluation metrics and generation capabilities
 
 The codebase is built on HuggingFace Transformers and uses Hydra for configuration management.
@@ -43,12 +44,6 @@ singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif
   bash -c "cd /workspace && python cli/SCRIPT.py [args]"
 ```
 
-For convenience, you can create an alias:
-```bash
-alias srun='singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif bash -c "cd /workspace && "'
-# Then use: srun python cli/extract_features.py [args]"
-```
-
 ### Running Unit Tests
 
 All tests are managed by pytest and can be run inside the Singularity container:
@@ -65,20 +60,16 @@ singularity exec --nv \
       cd /workspace && python -m pytest tests/"
 
 # Run all tests excluding slow ones
-singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && python -m pytest tests/ -m 'not slow'"
+python -m pytest tests/ -m 'not slow'"
 
 # Run a specific test file
-singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && python -m pytest tests/test_cosyvoice_unit.py"
+python -m pytest tests/test_cosyvoice_unit.py"
 
 # Run with verbose output
-singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && python -m pytest tests/ -v"
+python -m pytest tests/ -v"
 
 # Run a specific test
-singularity exec --nv -B $PWD:/workspace pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
-  bash -c "cd /workspace && pytest python -m tests/test_cosyvoice_unit.py::TestCosyVoiceFeatureExtractor::test_initialization -v"
+pytest python -m tests/test_cosyvoice_unit.py::TestCosyVoiceFeatureExtractor::test_initialization -v"
 ```
 
 **Test organization**:

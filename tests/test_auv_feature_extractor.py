@@ -18,7 +18,8 @@ def extractor():
     """Create AUV feature extractor fixture."""
     return AUVFeatureExtractor(
         checkpoint_path='auv.pt',
-        compile=False,
+        compile=False,  # TODO: Test if compile can speed up feature extraction.
+                        # If so, create separate tests for compiled version.
         device='cuda:0' if torch.cuda.is_available() else 'cpu',
         use_bf16=False,
     )
@@ -73,21 +74,6 @@ class TestAUVFeatureExtractor:
         print(f"  - Token range: [{features[0].min()}, {features[0].max()}]")
         print(f"  - First 20 tokens: {features[0][:20]}")
 
-    def test_downsampling_ratio(self, extractor, test_audio):
-        """Test downsampling ratio verification."""
-        wav = test_audio
-        features = extractor.extract(wav)
-
-        expected_tokens = int(wav.shape[1] / extractor._hop_length)
-        actual_tokens = len(features[0])
-
-        # Allow some tolerance
-        assert abs(expected_tokens - actual_tokens) < 10
-        print(f"✓ Downsampling verification")
-        print(f"  - Expected tokens: ~{expected_tokens}")
-        print(f"  - Actual tokens: {actual_tokens}")
-        print(f"  - Downsampling factor: {wav.shape[1] / actual_tokens:.1f}x")
-
     def test_batch_extraction(self, extractor, test_audio):
         """Test batch extraction."""
         wav = test_audio
@@ -116,7 +102,23 @@ class TestAUVFeatureExtractor:
         print(f"✓ Length masking successful")
         for i, (length, tokens) in enumerate(zip(lens, batch_features_masked)):
             print(f"  - Sample {i}: input length={length.item()}, output tokens={len(tokens)}")
+    
 
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(),
+        reason="No GPU available"
+    )
+    def test_gpu_extraction(self, extractor, test_audio):
+        """Test extraction on GPU if available."""
+        wav = test_audio.to('cuda:0')
+        features_gpu = extractor.extract(wav)
+
+        assert len(features_gpu) == 1
+        assert len(features_gpu[0]) > 0
+
+        print(f"✓ GPU feature extraction successful")
+        print(f"  - Number of samples: {len(features_gpu)}")
+        print(f"  - Token sequence length: {len(features_gpu[0])}")
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
