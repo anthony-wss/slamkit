@@ -287,3 +287,45 @@ singularity exec --nv \
       --device cuda:0 \
       --batch_size 8"
 ```
+
+#### 3.2.1 mmlu on fine-tuned checkpoint (via lm-evaluation-harness)
+
+```bash
+singularity exec --nv \
+  --env SSL_CERT_FILE=/workspace/cacert.pem \
+  -B /work/u3937558/slamkit:/workspace \
+  -B /work/u3937558/.cache:/tmp/cache \
+  /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "export HF_HOME=/tmp/cache/huggingface && \
+    export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
+    export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
+    cd /workspace/lm-evaluation-harness && source venv/bin/activate && \
+    lm_eval --model unitlm \
+      --model_args pretrained=/workspace/example_slamomni/pretrain_qwen3-0.6B_checkpoint \
+      --tasks mmlu_marketing \
+      --device cuda:0 \
+      --batch_size 8"
+```
+
+#### 3.2.2 generative mmlu-redux (via lm-evaluation-harness)
+
+Add `--limit 0.01` for debuging.
+
+```
+singularity exec --nv \
+  --env SSL_CERT_FILE=/workspace/cacert.pem \
+  -B /work/u3937558/slamkit:/workspace \
+  -B /work/u3937558/.cache:/tmp/cache \
+  /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "export HF_HOME=/tmp/cache/huggingface && \
+    export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
+    export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
+    cd /workspace/lm-evaluation-harness && source venv/bin/activate && \
+    lm_eval --model unitlm \
+      --model_args pretrained=/workspace/example_slamomni/checkpoints/text_then_speech_lr_1e-4/checkpoint-6151 \
+      --tasks mmlu_redux_stem_generative \
+      --device cuda:0 \
+      --batch_size 8 \
+      --output_path ./results/ \
+      --log_samples"
+```
