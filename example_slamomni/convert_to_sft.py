@@ -44,9 +44,18 @@ def convert_to_sft_format(
     assert tokenizer_name == "Qwen/Qwen3-0.6B", "This script is designed for Qwen3-0.6B tokenizer"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
 
+    # Add modality special tokens
+    modality_tokens = ["<text>", "</text>", "<speech>", "</speech>"]
+    num_added = tokenizer.add_special_tokens({"additional_special_tokens": modality_tokens})
+    print(f"Added {num_added} modality tokens: {modality_tokens}")
+
     # Get special token IDs
     im_start_id = tokenizer.convert_tokens_to_ids("<|im_start|>")
     im_end_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    text_start_id = tokenizer.convert_tokens_to_ids("<text>")
+    text_end_id = tokenizer.convert_tokens_to_ids("</text>")
+    speech_start_id = tokenizer.convert_tokens_to_ids("<speech>")
+    speech_end_id = tokenizer.convert_tokens_to_ids("</speech>")
 
     # Determine vocabulary size for text tokens
     text_vocab_size = len(tokenizer)
@@ -107,17 +116,73 @@ def convert_to_sft_format(
             assistant_prefix = tokenizer.encode("assistant\n", add_special_tokens=False)
             response_start_pos = second_im_start_pos + 1 + len(assistant_prefix)
 
-            # Insert speech tokens before final <|im_end|>
+            # Insert modality tokens and speech tokens
+            # Note: apply_chat_template with enable_thinking=False already adds <think></think>
+            # Original sequence: ... <|im_start|>assistant\n<think></think>{answer_text}<|im_end|>
+            # Target sequence: ... <|im_start|>assistant\n<think></think><text>{answer_text}</text><speech>{speech_tokens}</speech><|im_end|>
+
+            # Remove final <|im_end|> if present
             if text_tokens[-1] == im_end_id:
                 text_tokens_without_end = text_tokens[:-1]
-                input_ids = text_tokens_without_end + speech_tokens + [im_end_id]
             else:
-                input_ids = text_tokens + speech_tokens + [im_end_id]
+                text_tokens_without_end = text_tokens
+
+            # Find where <think></think> ends (the answer_text starts after </think>\n\n)
+            # The sequence is: <|im_start|>assistant\n<think></think>\n\n{answer_text}
+            think_end_tokens = tokenizer.encode("</think>", add_special_tokens=False)
+
+            # Find the position of </think>
+            think_end_pos = None
+            for i in range(response_start_pos, len(text_tokens_without_end)):
+                # Check if we found </think> token sequence
+                if (i + len(think_end_tokens) <= len(text_tokens_without_end) and
+                    text_tokens_without_end[i:i+len(think_end_tokens)] == think_end_tokens):
+                    think_end_pos = i + len(think_end_tokens)
+                    break
+
+            if think_end_pos is None:
+                raise ValueError("Could not find </think> token in the sequence")
+
+            # Skip the newlines after </think> to find where answer_text actually starts
+            # Qwen tokenizer encodes "\n\n" as a single token (271)
+            newline_token = tokenizer.encode("\n\n", add_special_tokens=False)[0]
+            if (think_end_pos < len(text_tokens_without_end) and
+                text_tokens_without_end[think_end_pos] == newline_token):
+                answer_text_start = think_end_pos + 1
+            else:
+                answer_text_start = think_end_pos
+
+            answer_text_end = len(text_tokens_without_end)
+
+            # Build the new sequence:
+            # 1. User part + "assistant\n" + <think></think>\n\n
+            # 2. <text>
+            # 3. Answer text tokens
+            # 4. </text>
+            # 5. <speech>
+            # 6. Speech tokens
+            # 7. </speech>
+            # 8. <|im_end|>
+            input_ids = (
+                text_tokens_without_end[:answer_text_start] +  # User part + "assistant\n<think></think>\n\n"
+                [text_start_id] +  # <text>
+                text_tokens_without_end[answer_text_start:answer_text_end] +  # Answer text
+                [text_end_id] +  # </text>
+                [speech_start_id] +  # <speech>
+                speech_tokens +  # Speech tokens
+                [speech_end_id] +  # </speech>
+                [im_end_id]  # <|im_end|>
+            )
 
             # Create labels: mask everything except assistant response
+            # Assistant response now starts after "assistant\n" and includes:
+            # <think></think><text>{answer_text}</text><speech>{speech_tokens}</speech><|im_end|>
+            # We need to calculate the new response_start_pos after inserting tokens
+            new_response_start_pos = input_ids.index(text_start_id)
+
             labels = (
-                [-100] * response_start_pos +
-                input_ids[response_start_pos:]
+                [-100] * new_response_start_pos +  # Mask user part + <think></think> + <text>
+                input_ids[new_response_start_pos:]  # Train on answer text + </text> + <speech> + speech tokens + </speech> + <|im_end|>
             )
 
             # Attention mask

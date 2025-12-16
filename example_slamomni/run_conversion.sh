@@ -34,7 +34,7 @@ singularity exec --nv \
     export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
     cd /workspace/example_slamomni && python convert_to_sft.py \
     --input_file '/data/*.parquet' \
-    --output_file ./sft_data/train_all.jsonl"
+    --output_file ./sft_data/train_v1.1.jsonl"
 
 echo "End time: $(date)"
 echo "Conversion complete!"
