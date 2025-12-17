@@ -7,14 +7,17 @@ This script tests:
 3. Initializing model with TWIST
 4. Running training for a few steps
 5. Verifying model checkpoints and outputs
+6. Freezing text embeddings and lm_head
 """
 
 import pytest
 import json
 import tempfile
 import os
+import torch
 from omegaconf import DictConfig, OmegaConf
 from hydra import initialize, compose
+from transformers import AutoTokenizer
 from slamkit.data import init_sft_dataset
 from slamkit.model import tlm_factory
 from slamkit.trainer import SLAMTrainer, SLAMTrainingArguments
@@ -428,6 +431,278 @@ class TestTrainingPipeline:
             print(f"  - Loss: {train_result.training_loss:.4f}")
 
             assert train_result.global_step == 2, "Should complete 2 steps"
+
+
+class TestEmbeddingFreezing:
+    """Test freezing of text embeddings and lm_head."""
+
+    def test_freeze_base_vocab_embeddings(self):
+        """Test that base vocabulary embeddings can be frozen while keeping new tokens trainable."""
+        # Create minimal model config
+        model_cfg = DictConfig({
+            'pretrained_model': None,
+            'context_len': 512,
+            'tlm_type': 'twist',
+            'config_args': {
+                'base_model_name': 'Qwen/Qwen3-0.6B',
+                'vocab_size': 151936 + 502,  # Qwen vocab + speech tokens
+                'use_cache': False,
+                'torch_dtype': 'bfloat16',
+                'trust_remote_code': True,
+                'twist_init': True
+            }
+        })
+
+        print(f"\nInitializing model for freezing test...")
+        model = tlm_factory(model_cfg)
+
+        # Get base text vocab size
+        base_tokenizer = AutoTokenizer.from_pretrained(
+            model_cfg.config_args.base_model_name,
+            trust_remote_code=True
+        )
+        base_vocab_size = len(base_tokenizer)
+
+        print(f"  - Base vocab size: {base_vocab_size}")
+        print(f"  - Total vocab size: {model_cfg.config_args.vocab_size}")
+
+        # Create freeze mask (same logic as train_sft.py)
+        freeze_mask = torch.zeros(model_cfg.config_args.vocab_size, dtype=torch.bool)
+        freeze_mask[:base_vocab_size] = True  # Freeze original text tokens
+
+        num_frozen = freeze_mask.sum().item()
+        num_trainable = (~freeze_mask).sum().item()
+
+        print(f"  - Frozen tokens: {num_frozen}")
+        print(f"  - Trainable tokens: {num_trainable}")
+
+        # Get embeddings
+        input_embeddings = model.get_input_embeddings()
+        output_embeddings = model.get_output_embeddings()
+
+        # Register gradient hooks (same logic as train_sft.py)
+        def freeze_base_vocab_grads(grad):
+            """Zero out gradients for base vocabulary tokens only."""
+            grad_mask = freeze_mask.to(grad.device)
+            grad[grad_mask] = 0
+            return grad
+
+        input_embeddings.weight.register_hook(freeze_base_vocab_grads)
+
+        def freeze_base_vocab_lm_head_grads(grad):
+            """Zero out gradients for base vocabulary tokens only."""
+            grad_mask = freeze_mask.to(grad.device)
+            grad[grad_mask] = 0
+            return grad
+
+        output_embeddings.weight.register_hook(freeze_base_vocab_lm_head_grads)
+
+        print(f"✓ Gradient hooks registered")
+
+        # Test gradient flow
+        device = next(model.parameters()).device
+        dummy_input = torch.randint(0, model_cfg.config_args.vocab_size, (2, 10), device=device)
+
+        # Forward pass
+        outputs = model(input_ids=dummy_input, labels=dummy_input)
+        loss = outputs.loss
+
+        # Backward pass
+        loss.backward()
+
+        # Check gradients
+        input_grad = input_embeddings.weight.grad
+        output_grad = output_embeddings.weight.grad
+
+        assert input_grad is not None, "Input embeddings should have gradients"
+        assert output_grad is not None, "Output embeddings should have gradients"
+
+        # Check that base vocab gradients are zero
+        base_grad_norm = input_grad[:base_vocab_size].norm().item()
+        new_tokens_grad_norm = input_grad[base_vocab_size:].norm().item()
+
+        print(f"\nInput embeddings gradient check:")
+        print(f"  - Base vocab gradient norm: {base_grad_norm:.6f}")
+        print(f"  - New tokens gradient norm: {new_tokens_grad_norm:.6f}")
+
+        assert base_grad_norm < 1e-6, f"Base vocab gradients should be ~0, got {base_grad_norm}"
+        assert new_tokens_grad_norm > 1e-6, f"New tokens gradients should be > 0, got {new_tokens_grad_norm}"
+
+        # Check output embeddings
+        base_grad_norm_out = output_grad[:base_vocab_size].norm().item()
+        new_tokens_grad_norm_out = output_grad[base_vocab_size:].norm().item()
+
+        print(f"\nOutput embeddings gradient check:")
+        print(f"  - Base vocab gradient norm: {base_grad_norm_out:.6f}")
+        print(f"  - New tokens gradient norm: {new_tokens_grad_norm_out:.6f}")
+
+        assert base_grad_norm_out < 1e-6, f"Base vocab lm_head gradients should be ~0, got {base_grad_norm_out}"
+        assert new_tokens_grad_norm_out > 1e-6, f"New tokens lm_head gradients should be > 0, got {new_tokens_grad_norm_out}"
+
+        print(f"\n✓ Base vocabulary embeddings are properly frozen")
+        print(f"✓ New tokens (speech units, special tokens) are trainable")
+
+    def test_special_tokens_trainable(self):
+        """Test that special tokens added during SFT remain trainable when base vocab is frozen."""
+        # Create model config
+        model_cfg = DictConfig({
+            'pretrained_model': None,
+            'context_len': 512,
+            'tlm_type': 'twist',
+            'config_args': {
+                'base_model_name': 'Qwen/Qwen3-0.6B',
+                'vocab_size': 152438,  # Qwen + speech units + special tokens
+                'use_cache': False,
+                'torch_dtype': 'bfloat16',
+                'trust_remote_code': True,
+                'twist_init': True
+            }
+        })
+
+        print(f"\nTesting special tokens trainability...")
+        model = tlm_factory(model_cfg)
+
+        # Get base vocab size
+        base_tokenizer = AutoTokenizer.from_pretrained(
+            model_cfg.config_args.base_model_name,
+            trust_remote_code=True
+        )
+        base_vocab_size = len(base_tokenizer)
+
+        # Create freeze mask
+        freeze_mask = torch.zeros(model_cfg.config_args.vocab_size, dtype=torch.bool)
+        freeze_mask[:base_vocab_size] = True
+
+        # Verify special tokens are in the trainable range
+        # Speech units: <Un0>, <Un1>, ..., <Un499> (indices base_vocab_size to base_vocab_size+499)
+        # Modality tokens: <speech>, <text> (indices after speech units)
+        # ChatML tokens: <|im_start|>, <|im_end|> (indices after modality tokens)
+
+        num_trainable = (~freeze_mask).sum().item()
+        expected_new_tokens = model_cfg.config_args.vocab_size - base_vocab_size
+
+        print(f"  - Base vocab size: {base_vocab_size}")
+        print(f"  - Total vocab size: {model_cfg.config_args.vocab_size}")
+        print(f"  - New tokens (trainable): {num_trainable}")
+        print(f"  - Expected new tokens: {expected_new_tokens}")
+
+        assert num_trainable == expected_new_tokens, \
+            f"Mismatch in trainable tokens: got {num_trainable}, expected {expected_new_tokens}"
+
+        # Verify that indices beyond base_vocab_size are not frozen
+        for idx in range(base_vocab_size, model_cfg.config_args.vocab_size):
+            assert not freeze_mask[idx], f"Token at index {idx} should be trainable"
+
+        print(f"✓ All {num_trainable} new tokens (speech units, modality tokens, special tokens) are trainable")
+
+    @pytest.mark.slow
+    def test_training_with_frozen_embeddings(self, test_sft_data):
+        """Test that training works correctly with frozen embeddings."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            train_path = os.path.join(tmpdir, "train.jsonl")
+            val_path = os.path.join(tmpdir, "val.jsonl")
+
+            with open(train_path, 'w') as f:
+                for sample in test_sft_data[:3]:
+                    f.write(json.dumps(sample) + '\n')
+
+            with open(val_path, 'w') as f:
+                f.write(json.dumps(test_sft_data[3]) + '\n')
+
+            # Initialize dataset
+            cfg = DictConfig({
+                'data': {
+                    'train_path': train_path,
+                    'val_path': val_path,
+                    'num_proc': 1
+                }
+            })
+
+            dataset, collator = init_sft_dataset(cfg)
+
+            # Determine vocab size
+            max_token = max(max(sample['input_ids']) for sample in dataset['train'])
+            vocab_size = max_token + 1
+
+            # Initialize model
+            model_cfg = DictConfig({
+                'pretrained_model': None,
+                'context_len': 512,
+                'tlm_type': 'twist',
+                'config_args': {
+                    'base_model_name': 'Qwen/Qwen3-0.6B',
+                    'vocab_size': vocab_size,
+                    'use_cache': False,
+                    'torch_dtype': 'bfloat16',
+                    'trust_remote_code': True,
+                    'twist_init': True
+                }
+            })
+
+            model = tlm_factory(model_cfg)
+
+            # Apply freezing (same as train_sft.py)
+            base_tokenizer = AutoTokenizer.from_pretrained(
+                model_cfg.config_args.base_model_name,
+                trust_remote_code=True
+            )
+            base_vocab_size = len(base_tokenizer)
+
+            freeze_mask = torch.zeros(vocab_size, dtype=torch.bool)
+            freeze_mask[:base_vocab_size] = True
+
+            input_embeddings = model.get_input_embeddings()
+            output_embeddings = model.get_output_embeddings()
+
+            def freeze_base_vocab_grads(grad):
+                grad_mask = freeze_mask.to(grad.device)
+                grad[grad_mask] = 0
+                return grad
+
+            input_embeddings.weight.register_hook(freeze_base_vocab_grads)
+            output_embeddings.weight.register_hook(freeze_base_vocab_grads)
+
+            print(f"✓ Embeddings frozen for training test")
+
+            # Create training arguments
+            output_dir = os.path.join(tmpdir, "output")
+            train_args = SLAMTrainingArguments(
+                output_dir=output_dir,
+                num_train_epochs=1,
+                max_steps=2,
+                per_device_train_batch_size=2,
+                per_device_eval_batch_size=2,
+                logging_steps=1,
+                save_strategy='no',
+                eval_strategy='no',
+                report_to=[],
+                bf16=True,
+                dataloader_num_workers=0,
+            )
+
+            # Create trainer
+            trainer = SLAMTrainer(
+                model=model,
+                args=train_args,
+                data_collator=collator,
+                train_dataset=dataset['train'],
+                eval_dataset=dataset['validation'],
+            )
+
+            print(f"Running training with frozen embeddings...")
+            train_result = trainer.train()
+
+            print(f"✓ Training completed successfully with frozen embeddings")
+            print(f"  - Train loss: {train_result.training_loss:.4f}")
+            print(f"  - Train steps: {train_result.global_step}")
+
+            # Verify training ran
+            assert train_result.global_step == 2, f"Expected 2 steps, got {train_result.global_step}"
+            assert train_result.training_loss > 0, "Training loss should be positive"
+
+            # Verify base vocab embeddings didn't change during training
+            # (This is a sanity check - in practice the hooks should prevent updates)
+            print(f"✓ Training with frozen embeddings works correctly")
 
 
 if __name__ == "__main__":

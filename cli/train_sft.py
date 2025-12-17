@@ -2,6 +2,7 @@ import math
 from omegaconf import OmegaConf, DictConfig
 import hydra
 import os
+import torch
 
 from slamkit.data import init_sft_dataset
 from slamkit.model import tlm_factory
@@ -49,6 +50,58 @@ def main(cfg: DictConfig):
 
     # Note: Model vocab_size is already set correctly during initialization
     # No need to resize embeddings here as TWIST handles it during model creation
+
+    # Freeze text embeddings and lm_head if requested
+    if cfg.get('freeze_text_embeddings', False):
+        logger.info('Freezing text embeddings and lm_head...')
+
+        # Determine the original text vocab size (before adding any new tokens)
+        # We need to load the base tokenizer to get its vocab size
+        from transformers import AutoTokenizer
+        base_tokenizer = AutoTokenizer.from_pretrained(cfg.model.config_args.base_model_name, trust_remote_code=True)
+        base_vocab_size = len(base_tokenizer)
+        logger.info(f'Base text vocab size: {base_vocab_size}')
+        logger.info(f'Total model vocab size: {cfg.model.config_args.vocab_size}')
+
+        # Create a mask to identify which tokens should be frozen
+        # All tokens from base_vocab_size onwards are new tokens that should be trainable:
+        # - Speech unit tokens: <Un0>, <Un1>, ..., <Un499> (or more)
+        # - Modality tokens: <speech>, <text>
+        # - ChatML special tokens: <|im_start|>, <|im_end|>
+        # Only freeze the original base model vocabulary (0:base_vocab_size)
+        freeze_mask = torch.zeros(cfg.model.config_args.vocab_size, dtype=torch.bool)
+        freeze_mask[:base_vocab_size] = True  # Freeze original text tokens
+
+        num_frozen = freeze_mask.sum().item()
+        num_trainable = (~freeze_mask).sum().item()
+        logger.info(f'Freezing {num_frozen} base vocabulary embeddings')
+        logger.info(f'Keeping {num_trainable} new tokens trainable (speech units, modality tokens, special tokens)')
+
+        # Freeze input embeddings for base text tokens
+        input_embeddings = model.get_input_embeddings()
+
+        def freeze_base_vocab_grads(grad):
+            """Zero out gradients for base vocabulary tokens only."""
+            grad_mask = freeze_mask.to(grad.device)
+            grad[grad_mask] = 0
+            return grad
+
+        input_embeddings.weight.register_hook(freeze_base_vocab_grads)
+        logger.info(f'Registered gradient hook to freeze input embeddings for base vocabulary (0:{base_vocab_size})')
+
+        # Freeze output embeddings (lm_head) for base text tokens
+        output_embeddings = model.get_output_embeddings()
+        if output_embeddings is not None:
+            def freeze_base_vocab_lm_head_grads(grad):
+                """Zero out gradients for base vocabulary tokens only."""
+                grad_mask = freeze_mask.to(grad.device)
+                grad[grad_mask] = 0
+                return grad
+
+            output_embeddings.weight.register_hook(freeze_base_vocab_lm_head_grads)
+            logger.info(f'Registered gradient hook to freeze lm_head for base vocabulary (0:{base_vocab_size})')
+
+        logger.info('Text embeddings and lm_head frozen successfully (excluding new tokens)')
 
     if cfg.training_args.get('warmup_steps', 0) > 0 and cfg.training_args.get('warmup_ratio', .0) > 0:
         logger.warning('Both warmup_steps and warmup_ratio are set, setting to maximum of the two!')

@@ -8,3 +8,4 @@ defaults:
 cont_training: False
 run_time: null
 train_max_tokens: null
+freeze_text_embeddings: False
