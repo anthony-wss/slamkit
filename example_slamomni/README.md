@@ -248,6 +248,37 @@ model.save_pretrained(train_args.output_dir)
 exit()
 ``` 
 
+#### 2.1 Training model v1.1
+
+Modality token + freezing text parameters.
+
+```bash
+singularity exec --nv \
+  --env SSL_CERT_FILE=/workspace/cacert.pem \
+  -B /work/u3937558/slamkit:/workspace \
+  -B /work/u3937558/.cache:/tmp/cache \
+  /work/u3937558/slamkit/pytorch_2.6.0-cuda12.4-cudnn9-devel.sif \
+  bash -c "export HF_HOME=/tmp/cache/huggingface && \
+    export HF_DATASETS_CACHE=/tmp/cache/huggingface/datasets && \
+    export TRANSFORMERS_CACHE=/tmp/cache/huggingface/transformers && \
+    cd /workspace && python cli/train_sft.py \
+    model=text_then_speech \
+    data.train_path=example_slamomni/sft_data/train_v1.1.jsonl \
+    data.val_path=example_slamomni/sft_data/eval_v1.1.jsonl \
+    training_args.output_dir=example_slamomni/checkpoints/model_v1.1 \
+    training_args.num_train_epochs=1 \
+    training_args.learning_rate=1e-4 \
+    training_args.logging_steps=10 \
+    training_args.per_device_train_batch_size=16 \
+    training_args.save_strategy=steps \
+    logger.report_to=wandb \
+    +logger.project=text_then_speech \
+    +training_args.save_steps=1000 \
+    training_args.eval_strategy=steps \
+    training_args.eval_steps=1000 \
+    freeze_text_embeddings=true"
+```
+
 ### 3. Evaluation
 
 #### 3.1 MMLU-Redux
