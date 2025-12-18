@@ -22,7 +22,7 @@ class SlamOmniInference:
         self,
         model_path: str = "example_slamomni/output/checkpoint-125",
         tokenizer_name: str = "Qwen/Qwen3-0.6B",
-        text_vocab_size: int = 151669,
+        speech_offset: int = 151673,  # The speech offset of model v1.1
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """
@@ -31,12 +31,11 @@ class SlamOmniInference:
         Args:
             model_path: Path to the trained model checkpoint
             tokenizer_name: HuggingFace tokenizer name
-            text_vocab_size: Size of text vocabulary (speech tokens start after this)
+            speech_offset: speech tokens start after this
             device: Device to run inference on
         """
         print(f"Loading model from {model_path}...")
         self.device = device
-        self.text_vocab_size = text_vocab_size
 
         # Load model using UnitLM (SlamKit's custom model class)
         model_path = Path(model_path).resolve()  # Convert to absolute path
@@ -62,8 +61,12 @@ class SlamOmniInference:
         special_tokens = ["<|im_start|>", "<|im_end|>"]
         self.tokenizer.add_special_tokens({"additional_special_tokens": special_tokens})
 
-        print(f"Text vocabulary size: {self.text_vocab_size}")
+        # TODO: add modality tokens
+        self.tokenizer.add_special_tokens({"additional_special_tokens": ["<text>", "</text>", "<speech>", "</speech>"]})
+        self.speech_offset = speech_offset
+
         print(f"Total model vocabulary: {self.model.config.vocab_size}")
+        print(f"Speech offset: {self.speech_offset}")
         print("Inference engine ready!\n")
 
     def generate_response(
@@ -121,11 +124,11 @@ class SlamOmniInference:
         speech_token_ids = []
 
         for token_id in generated_ids:
-            if token_id < self.text_vocab_size:
+            if self.tokenizer.decode(token_id):
                 text_token_ids.append(token_id)
             else:
                 # Speech token (de-offset)
-                speech_token_ids.append(token_id - self.text_vocab_size)
+                speech_token_ids.append(token_id - self.speech_offset)
 
         # Decode text
         text_response = self.tokenizer.decode(text_token_ids, skip_special_tokens=False)

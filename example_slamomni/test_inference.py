@@ -10,7 +10,8 @@ def test_inference():
     print("Initializing inference engine...")
     inference = SlamOmniInference(
         # model_path="sft_overfit_model/checkpoint-600"  # Relative to example_slamomni/
-        model_path="checkpoints/text_then_speech_lr_2e-5/text_then_speech-checkpoint-7236"
+        model_path="checkpoints/model_v1.1/checkpoint-6151",
+        speech_offset = 151673,
     )
 
     # Test question
